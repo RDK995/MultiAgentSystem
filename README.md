@@ -10,7 +10,7 @@ The system follows an orchestrator + specialist pattern:
    - Manages the end-to-end workflow.
    - Interacts with the user and consolidates outputs from specialist agents.
 2. **Agent 1: Marketplace Discovery**
-   - Identifies foreign marketplaces commonly used for sourcing.
+   - Focuses on Meccha Japan as the primary sourcing marketplace for Japan-exclusive products.
 3. **Agent 2: Item Sourcing**
    - Finds candidate items on the discovered marketplaces.
 4. **Agent 3: Profitability Analysis**
@@ -33,6 +33,14 @@ source .venv/bin/activate
 pip install -e .
 python -m uk_resell_adk.main --json
 ```
+
+Each run also writes a formatted HTML report to a unique timestamped file, for example `reports/uk_resell_report_20260216_164500.html`.
+You can override the path with `--html-out`, for example:
+
+```bash
+python -m uk_resell_adk.main --html-out reports/latest.html
+```
+
 
 ## LangSmith Tracing
 
@@ -59,3 +67,4 @@ If your environment has ADK CLI configured, point it at `uk_resell_adk.app:root_
 - Keep all model/runtime knobs in a central config object.
 - Return structured outputs from each agent stage for deterministic downstream processing.
 - Use compliant APIs for production data acquisition (especially marketplace scraping constraints).
+- Profitability currently assumes UK-based private seller eBay fees (0% final value baseline for eligible categories); adjust for business accounts or category-specific fees as needed.
