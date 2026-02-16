@@ -34,6 +34,21 @@ pip install -e .
 python -m uk_resell_adk.main --json
 ```
 
+## LangSmith Tracing
+
+Tracing is integrated for the local workflow and ADK entrypoint. To enable it:
+
+```bash
+export LANGSMITH_API_KEY="your-api-key"
+export LANGSMITH_TRACING="true"              # optional, auto-defaults to true when API key exists
+export LANGSMITH_PROJECT="uk-resell-adk"     # optional
+```
+
+Traced spans include:
+- Local dry-run workflow
+- Agent system build step
+- Discovery/sourcing/profitability tool calls
+
 ## Run with ADK
 
 If your environment has ADK CLI configured, point it at `uk_resell_adk.app:root_agent`.

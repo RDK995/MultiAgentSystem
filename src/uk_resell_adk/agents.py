@@ -4,6 +4,7 @@ from google.adk.agents import LlmAgent, SequentialAgent
 from google.adk.tools import FunctionTool
 
 from uk_resell_adk.config import RuntimeConfig
+from uk_resell_adk.tracing import traceable
 from uk_resell_adk.tools import (
     assess_profitability_against_ebay,
     discover_foreign_marketplaces,
@@ -11,6 +12,7 @@ from uk_resell_adk.tools import (
 )
 
 
+@traceable(name="build_multi_agent_system", run_type="chain")
 def build_multi_agent_system(config: RuntimeConfig) -> SequentialAgent:
     """Build the ADK multi-agent pipeline.
 

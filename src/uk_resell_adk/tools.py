@@ -6,11 +6,13 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from uk_resell_adk.models import CandidateItem, MarketplaceSite, ProfitabilityAssessment
+from uk_resell_adk.tracing import traceable
 
 
 USER_AGENT = "uk-resell-adk/0.1 (+research assistant)"
 
 
+@traceable(name="discover_foreign_marketplaces", run_type="tool")
 def discover_foreign_marketplaces() -> list[MarketplaceSite]:
     """Agent 1 tool: return foreign marketplaces frequently used for export arbitrage.
 
@@ -46,6 +48,7 @@ def discover_foreign_marketplaces() -> list[MarketplaceSite]:
     ]
 
 
+@traceable(name="find_candidate_items", run_type="tool")
 def find_candidate_items(marketplace: MarketplaceSite) -> list[CandidateItem]:
     """Agent 2 tool: seed examples per marketplace.
 
@@ -113,6 +116,7 @@ def find_candidate_items(marketplace: MarketplaceSite) -> list[CandidateItem]:
     ]
 
 
+@traceable(name="_safe_fetch_ebay_price_snapshots", run_type="tool")
 def _safe_fetch_ebay_price_snapshots(query: str) -> list[float]:
     """Fetch rough sold-price snapshots from eBay search page JSON snippets.
 
@@ -159,6 +163,7 @@ def _safe_fetch_ebay_price_snapshots(query: str) -> list[float]:
     return prices
 
 
+@traceable(name="assess_profitability_against_ebay", run_type="tool")
 def assess_profitability_against_ebay(item: CandidateItem) -> ProfitabilityAssessment:
     """Agent 3 tool: estimate arbitrage profitability from eBay sold-price snapshots."""
 

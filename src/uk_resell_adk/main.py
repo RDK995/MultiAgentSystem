@@ -4,6 +4,7 @@ import argparse
 import json
 
 from uk_resell_adk.config import DEFAULT_CONFIG
+from uk_resell_adk.tracing import configure_langsmith, traceable
 from uk_resell_adk.tools import (
     assess_profitability_against_ebay,
     discover_foreign_marketplaces,
@@ -11,6 +12,7 @@ from uk_resell_adk.tools import (
 )
 
 
+@traceable(name="run_local_dry_run", run_type="chain")
 def run_local_dry_run() -> dict:
     marketplaces = discover_foreign_marketplaces()[: DEFAULT_CONFIG.max_foreign_sites]
 
@@ -28,6 +30,7 @@ def run_local_dry_run() -> dict:
 
 
 def main() -> None:
+    configure_langsmith()
     parser = argparse.ArgumentParser(description="UK resale ADK multi-agent dry run helper")
     parser.add_argument("--json", action="store_true", help="Print workflow output as JSON")
     args = parser.parse_args()
