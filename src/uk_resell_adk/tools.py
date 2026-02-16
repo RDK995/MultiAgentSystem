@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from statistics import median
 
-from urllib.parse import urlencode
+from urllib.parse import quote_plus, urlencode
 from urllib.request import Request, urlopen
 
 from uk_resell_adk.models import CandidateItem, MarketplaceSite, ProfitabilityAssessment
@@ -10,6 +11,120 @@ from uk_resell_adk.tracing import traceable
 
 
 USER_AGENT = "uk-resell-adk/0.1 (+research assistant)"
+
+# eBay UK private seller baseline (non-vehicle categories):
+# "No transaction or final value fees" for UK-based private sellers.
+# Source: https://www.ebay.co.uk/help/fees-credits-invoices/selling-fees/fees-private-sellers?id=4822
+EBAY_FINAL_VALUE_FEE_RATE = 0.0
+EBAY_PER_ORDER_FEE_GBP = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class _MecchaSeed:
+    title: str
+    query: str
+    source_price_gbp: float
+    shipping_to_uk_gbp: float
+    demand_weight: float
+    competition_penalty: float
+    volatility_penalty: float
+
+
+_MECCHA_JAPAN_SEEDS: tuple[_MecchaSeed, ...] = (
+    _MecchaSeed(
+        title="Pokemon Center Japan Exclusive Plush (seasonal release)",
+        query="pokemon center japan exclusive plush",
+        source_price_gbp=28.0,
+        shipping_to_uk_gbp=16.0,
+        demand_weight=9.1,
+        competition_penalty=2.4,
+        volatility_penalty=1.2,
+    ),
+    _MecchaSeed(
+        title="Bandai Metal Build Gundam figure (Japan release)",
+        query="bandai metal build gundam japan",
+        source_price_gbp=170.0,
+        shipping_to_uk_gbp=22.0,
+        demand_weight=8.4,
+        competition_penalty=2.8,
+        volatility_penalty=2.2,
+    ),
+    _MecchaSeed(
+        title="S.H.Figuarts Dragon Ball event-limited figure",
+        query="sh figuarts dragon ball event limited",
+        source_price_gbp=72.0,
+        shipping_to_uk_gbp=18.0,
+        demand_weight=8.7,
+        competition_penalty=2.6,
+        volatility_penalty=1.9,
+    ),
+    _MecchaSeed(
+        title="One Piece Portrait.Of.Pirates limited statue",
+        query="one piece portrait of pirates limited",
+        source_price_gbp=118.0,
+        shipping_to_uk_gbp=21.0,
+        demand_weight=8.3,
+        competition_penalty=2.3,
+        volatility_penalty=2.1,
+    ),
+    _MecchaSeed(
+        title="Studio Ghibli Donguri collectible figure",
+        query="studio ghibli donguri collectible figure",
+        source_price_gbp=34.0,
+        shipping_to_uk_gbp=17.0,
+        demand_weight=7.9,
+        competition_penalty=2.0,
+        volatility_penalty=1.4,
+    ),
+    _MecchaSeed(
+        title="Sanrio Japan collaboration mascot keychain set",
+        query="sanrio japan collaboration mascot keychain set",
+        source_price_gbp=24.0,
+        shipping_to_uk_gbp=16.0,
+        demand_weight=8.1,
+        competition_penalty=2.2,
+        volatility_penalty=1.3,
+    ),
+    _MecchaSeed(
+        title="Pokemon Card Japanese special set box (sealed)",
+        query="pokemon card japanese special set box sealed",
+        source_price_gbp=62.0,
+        shipping_to_uk_gbp=18.0,
+        demand_weight=9.0,
+        competition_penalty=3.2,
+        volatility_penalty=2.5,
+    ),
+    _MecchaSeed(
+        title="Blue Lock Japan-only acrylic stand collection",
+        query="blue lock japan only acrylic stand",
+        source_price_gbp=21.0,
+        shipping_to_uk_gbp=15.0,
+        demand_weight=7.5,
+        competition_penalty=1.8,
+        volatility_penalty=1.1,
+    ),
+)
+
+
+def _meccha_search_url(query: str) -> str:
+    return f"https://meccha-japan.com/en/search?controller=search&s={quote_plus(query)}"
+
+
+def _seed_priority_score(seed: _MecchaSeed) -> float:
+    """Rank products by resale potential and listing risk.
+
+    This replaces the old static marketplace mapping with category-aware scoring,
+    giving preference to strong UK demand while penalizing volatile categories.
+    """
+
+    landed_cost = seed.source_price_gbp + seed.shipping_to_uk_gbp
+    landed_cost_penalty = landed_cost / 90
+    return (
+        seed.demand_weight
+        - seed.competition_penalty
+        - seed.volatility_penalty
+        - landed_cost_penalty
+    )
 
 
 @traceable(name="discover_foreign_marketplaces", run_type="tool")
@@ -22,28 +137,13 @@ def discover_foreign_marketplaces() -> list[MarketplaceSite]:
 
     return [
         MarketplaceSite(
-            name="Mercari Japan",
+            name="Meccha Japan",
             country="Japan",
-            url="https://jp.mercari.com/",
-            reason="High volume of collectible categories with price spread to UK buyers.",
-        ),
-        MarketplaceSite(
-            name="Yahoo! Auctions Japan",
-            country="Japan",
-            url="https://auctions.yahoo.co.jp/",
-            reason="Frequent underpriced bundles and niche hobby listings.",
-        ),
-        MarketplaceSite(
-            name="Buyee (proxy marketplace)",
-            country="Japan",
-            url="https://buyee.jp/",
-            reason="Aggregates Japanese marketplaces and supports international shipping.",
-        ),
-        MarketplaceSite(
-            name="Kleinanzeigen",
-            country="Germany",
-            url="https://www.kleinanzeigen.de/",
-            reason="Strong local second-hand supply in electronics and bike components.",
+            url="https://meccha-japan.com/",
+            reason=(
+                "Focused catalog of Japan-exclusive anime, gaming, and collectible products "
+                "that resellers can source with clearer product specificity than auction feeds."
+            ),
         ),
     ]
 
@@ -56,63 +156,20 @@ def find_candidate_items(marketplace: MarketplaceSite) -> list[CandidateItem]:
     a compliant live search integration is attached.
     """
 
-    sample_catalog: dict[str, list[tuple[str, str, float, float, str]]] = {
-        "Mercari Japan": [
-            (
-                "Sony Walkman WM-EX series cassette player",
-                "https://jp.mercari.com/search?keyword=sony%20walkman",
-                85.0,
-                22.0,
-                "Used",
-            ),
-            (
-                "Pokémon Center plush (limited regional release)",
-                "https://jp.mercari.com/search?keyword=pokemon%20center%20plush",
-                28.0,
-                18.0,
-                "New",
-            ),
-        ],
-        "Yahoo! Auctions Japan": [
-            (
-                "Retro game bundle (Super Famicom titles)",
-                "https://auctions.yahoo.co.jp/search/search?p=super+famicom",
-                60.0,
-                24.0,
-                "Used",
-            ),
-        ],
-        "Buyee (proxy marketplace)": [
-            (
-                "Seiko JDM watch model",
-                "https://buyee.jp/item/search/query/seiko%20jdm",
-                140.0,
-                20.0,
-                "Used",
-            ),
-        ],
-        "Kleinanzeigen": [
-            (
-                "Shimano Ultegra groupset",
-                "https://www.kleinanzeigen.de/s-shimano-ultegra/k0",
-                250.0,
-                30.0,
-                "Used",
-            ),
-        ],
-    }
+    if marketplace.name != "Meccha Japan":
+        return []
 
-    rows = sample_catalog.get(marketplace.name, [])
+    ranked_seeds = sorted(_MECCHA_JAPAN_SEEDS, key=_seed_priority_score, reverse=True)
     return [
         CandidateItem(
             site_name=marketplace.name,
-            title=title,
-            url=url,
-            source_price_gbp=source_price,
-            shipping_to_uk_gbp=shipping,
-            condition=condition,
+            title=seed.title,
+            url=_meccha_search_url(seed.query),
+            source_price_gbp=seed.source_price_gbp,
+            shipping_to_uk_gbp=seed.shipping_to_uk_gbp,
+            condition="New",
         )
-        for title, url, source_price, shipping, condition in rows
+        for seed in ranked_seeds
     ]
 
 
@@ -171,7 +228,7 @@ def assess_profitability_against_ebay(item: CandidateItem) -> ProfitabilityAsses
     benchmark = median(sold_prices) if sold_prices else item.source_price_gbp * 1.35
 
     landed_cost = item.source_price_gbp + item.shipping_to_uk_gbp
-    fees = benchmark * 0.145
+    fees = (benchmark * EBAY_FINAL_VALUE_FEE_RATE) + EBAY_PER_ORDER_FEE_GBP
     profit = benchmark - landed_cost - fees
     margin = (profit / landed_cost) * 100 if landed_cost else 0
 
