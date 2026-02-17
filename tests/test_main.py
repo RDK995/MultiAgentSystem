@@ -111,7 +111,7 @@ def test_main_json_mode_writes_json_to_stdout_and_report_notice_to_stderr(
 ) -> None:
     out = tmp_path / "report.html"
     monkeypatch.setattr(main, "run_local_dry_run", lambda: SAMPLE_RESULT)
-    monkeypatch.setattr(main, "configure_langsmith", lambda: None)
+    monkeypatch.setattr(main, "configure_tracing", lambda: None)
 
     monkeypatch.setattr(sys, "argv", ["prog", "--json", "--html-out", str(out)])
     main.main()
@@ -126,7 +126,7 @@ def test_main_json_mode_writes_json_to_stdout_and_report_notice_to_stderr(
 def test_main_text_mode_prints_summary(monkeypatch: Any, capsys: Any, tmp_path: Path) -> None:
     out = tmp_path / "report.html"
     monkeypatch.setattr(main, "run_local_dry_run", lambda: SAMPLE_RESULT)
-    monkeypatch.setattr(main, "configure_langsmith", lambda: None)
+    monkeypatch.setattr(main, "configure_tracing", lambda: None)
 
     monkeypatch.setattr(sys, "argv", ["prog", "--html-out", str(out)])
     main.main()
@@ -142,7 +142,7 @@ def test_main_text_mode_prints_summary(monkeypatch: Any, capsys: Any, tmp_path: 
 def test_main_uses_unique_default_html_output_path(monkeypatch: Any, capsys: Any, tmp_path: Path) -> None:
     out = tmp_path / "uk_resell_report_20260216_120000.html"
     monkeypatch.setattr(main, "run_local_dry_run", lambda: SAMPLE_RESULT)
-    monkeypatch.setattr(main, "configure_langsmith", lambda: None)
+    monkeypatch.setattr(main, "configure_tracing", lambda: None)
     monkeypatch.setattr(main, "_default_html_output_path", lambda: out)
 
     monkeypatch.setattr(sys, "argv", ["prog", "--json"])

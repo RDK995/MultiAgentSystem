@@ -16,7 +16,7 @@ from uk_resell_adk.tools import (
     get_source_diagnostics,
     reset_source_diagnostics,
 )
-from uk_resell_adk.tracing import configure_langsmith, traceable
+from uk_resell_adk.tracing import configure_tracing, traceable
 
 
 @traceable(name="run_local_dry_run", run_type="chain")
@@ -61,7 +61,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     """CLI entrypoint."""
-    configure_langsmith()
+    configure_tracing()
     args = _build_arg_parser().parse_args()
 
     configure_source_runtime(
