@@ -8,6 +8,7 @@ centralized and easy to evolve.
 """
 
 import atexit
+import functools
 import os
 import sys
 from collections.abc import Callable
@@ -33,6 +34,18 @@ try:
     from langfuse import get_client as _langfuse_get_client
 except Exception:
     _langfuse_get_client = None
+
+try:
+    # Preferred way to assign user/session for nested observations.
+    from langfuse import propagate_attributes as _langfuse_propagate_attributes
+except Exception:
+    _langfuse_propagate_attributes = None
+
+try:
+    # Context API supports setting session/user attributes on the current trace.
+    from langfuse.decorators import langfuse_context as _langfuse_context
+except Exception:
+    _langfuse_context = None
 
 
 _AEXIT_REGISTERED = False
@@ -70,6 +83,37 @@ def _langfuse_as_type(run_type: Any) -> str | None:
     return None
 
 
+def _langfuse_trace_identity_decorator() -> Callable[[F], F]:
+    def _decorator(func: F) -> F:
+        if _langfuse_context is None and _langfuse_propagate_attributes is None:
+            return func
+
+        @functools.wraps(func)
+        def _wrapped(*f_args: Any, **f_kwargs: Any) -> Any:
+            user_id = os.getenv("LANGFUSE_USER_ID")
+            session_id = os.getenv("LANGFUSE_SESSION_ID")
+            if not (user_id or session_id):
+                return func(*f_args, **f_kwargs)
+
+            if _langfuse_propagate_attributes is not None:
+                try:
+                    with _langfuse_propagate_attributes(user_id=user_id, session_id=session_id):
+                        return func(*f_args, **f_kwargs)
+                except Exception:
+                    pass
+
+            if _langfuse_context is not None:
+                try:
+                    _langfuse_context.update_current_trace(user_id=user_id, session_id=session_id)
+                except Exception:
+                    pass
+            return func(*f_args, **f_kwargs)
+
+        return cast(F, _wrapped)
+
+    return _decorator
+
+
 def traceable(*args: Any, **kwargs: Any) -> Callable[[F], F]:
     """Return a decorator that fans out traces to enabled providers."""
     decorators: list[Callable[[F], F]] = []
@@ -84,6 +128,7 @@ def traceable(*args: Any, **kwargs: Any) -> Callable[[F], F]:
         if as_type is not None:
             lf_kwargs["as_type"] = as_type
         decorators.append(cast(Callable[[F], F], _langfuse_observe(*args, **lf_kwargs)))
+        decorators.append(_langfuse_trace_identity_decorator())
 
     langsmith_enabled = _env_truthy("ENABLE_LANGSMITH_TRACING", True) and bool(os.getenv("LANGSMITH_API_KEY"))
     if langsmith_enabled and _langsmith_traceable is not None:

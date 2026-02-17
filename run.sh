@@ -11,6 +11,23 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   set +a
 fi
 
+_truthy() {
+  local raw="${1:-}"
+  local raw_lc
+  raw_lc="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+  case "$raw_lc" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if _truthy "${ENABLE_LANGFUSE_TRACING:-true}" \
+  && [[ -n "${LANGFUSE_PUBLIC_KEY:-}" ]] \
+  && [[ -n "${LANGFUSE_SECRET_KEY:-}" ]]; then
+  export LANGFUSE_USER_ID="${LANGFUSE_USER_ID:-${USER:-unknown-user}}"
+  export LANGFUSE_SESSION_ID="${LANGFUSE_SESSION_ID:-uk-resell-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+fi
+
 usage() {
   cat <<'USAGE'
 Usage:

@@ -116,3 +116,83 @@ def test_traceable_delegates_to_both_when_available(monkeypatch: Any) -> None:
 
     assert wrapped() == 1
     assert events == ["langfuse", "langsmith"]
+
+
+def test_traceable_sets_langfuse_session_and_user_on_current_trace(monkeypatch: Any) -> None:
+    updates: list[dict[str, Any]] = []
+
+    class _FakeLangfuseContext:
+        @staticmethod
+        def update_current_trace(**kwargs: Any) -> None:
+            updates.append(kwargs)
+
+    def fake_langfuse_observe(*args: Any, **kwargs: Any):
+        def _decorator(func: Any) -> Any:
+            def _wrapped(*f_args: Any, **f_kwargs: Any) -> Any:
+                return func(*f_args, **f_kwargs)
+
+            return _wrapped
+
+        return _decorator
+
+    monkeypatch.setattr(tracing, "_langfuse_context", _FakeLangfuseContext())
+    monkeypatch.setattr(tracing, "_langfuse_observe", fake_langfuse_observe)
+    monkeypatch.setattr(tracing, "_langfuse_propagate_attributes", None)
+    monkeypatch.setenv("ENABLE_LANGFUSE_TRACING", "true")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "lf-pk")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "lf-sk")
+    monkeypatch.setenv("LANGFUSE_USER_ID", "user-123")
+    monkeypatch.setenv("LANGFUSE_SESSION_ID", "session-123")
+
+    decorator = tracing.traceable(name="abc", run_type="chain")
+
+    def sample() -> str:
+        return "ok"
+
+    wrapped = decorator(sample)
+    assert wrapped() == "ok"
+    assert updates == [{"user_id": "user-123", "session_id": "session-123"}]
+
+
+def test_traceable_prefers_langfuse_propagate_attributes(monkeypatch: Any) -> None:
+    updates: list[dict[str, Any]] = []
+
+    class _FakeContextManager:
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self.payload = payload
+
+        def __enter__(self) -> None:
+            updates.append(self.payload)
+
+        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            return None
+
+    def fake_propagate_attributes(**kwargs: Any) -> _FakeContextManager:
+        return _FakeContextManager(kwargs)
+
+    def fake_langfuse_observe(*args: Any, **kwargs: Any):
+        def _decorator(func: Any) -> Any:
+            def _wrapped(*f_args: Any, **f_kwargs: Any) -> Any:
+                return func(*f_args, **f_kwargs)
+
+            return _wrapped
+
+        return _decorator
+
+    monkeypatch.setattr(tracing, "_langfuse_propagate_attributes", fake_propagate_attributes)
+    monkeypatch.setattr(tracing, "_langfuse_context", None)
+    monkeypatch.setattr(tracing, "_langfuse_observe", fake_langfuse_observe)
+    monkeypatch.setenv("ENABLE_LANGFUSE_TRACING", "true")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "lf-pk")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "lf-sk")
+    monkeypatch.setenv("LANGFUSE_USER_ID", "user-123")
+    monkeypatch.setenv("LANGFUSE_SESSION_ID", "session-123")
+
+    decorator = tracing.traceable(name="abc", run_type="chain")
+
+    def sample() -> str:
+        return "ok"
+
+    wrapped = decorator(sample)
+    assert wrapped() == "ok"
+    assert updates == [{"user_id": "user-123", "session_id": "session-123"}]
