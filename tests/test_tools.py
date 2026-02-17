@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from uk_resell_adk.models import CandidateItem, MarketplaceSite
 from uk_resell_adk import tools
+from uk_resell_adk.models import CandidateItem, MarketplaceSite
 
 
 class _FakeResponse:
@@ -20,34 +20,44 @@ class _FakeResponse:
         return self._content.encode("utf-8")
 
 
-def test_discover_foreign_marketplaces_returns_only_meccha_japan() -> None:
+def test_discover_foreign_marketplaces_returns_expected_sources() -> None:
     marketplaces = tools.discover_foreign_marketplaces()
 
-    assert len(marketplaces) == 1
-    site = marketplaces[0]
-    assert site.name == "Meccha Japan"
-    assert site.country == "Japan"
-    assert site.url == "https://meccha-japan.com/"
+    names = {m.name for m in marketplaces}
+    assert names == {"HobbyLink Japan", "Nin-Nin-Game"}
 
 
-def test_find_candidate_items_for_known_marketplace_returns_ranked_new_items() -> None:
+def test_find_candidate_items_for_known_marketplace_uses_adapter(monkeypatch: Any) -> None:
     marketplace = MarketplaceSite(
-        name="Meccha Japan",
+        name="Nin-Nin-Game",
         country="Japan",
-        url="https://meccha-japan.com/",
+        url="https://www.nin-nin-game.com/en/",
         reason="catalog",
     )
 
+    class _FakeAdapter:
+        last_fetch_meta = {"blocked": 0, "fetch_errors": 0, "parse_misses": 0, "live_items": 0, "fallback_items": 0}
+
+        def fetch_candidates(
+            self,
+            limit: int,
+            timeout_seconds: float = 10,
+            retries: int = 2,
+            allow_fallback: bool = False,
+        ) -> list[CandidateItem]:
+            return [
+                CandidateItem("Nin-Nin-Game", "Item A", "https://example.com/a", 30.0, 12.0, "New", data_origin="live"),
+                CandidateItem("Nin-Nin-Game", "Item A duplicate", "https://example.com/a", 40.0, 13.0, "New", data_origin="live"),
+                CandidateItem("Nin-Nin-Game", "Item B", "https://example.com/b", 22.0, 12.0, "New", data_origin="live"),
+            ]
+
+    monkeypatch.setattr(tools, "_get_adapter_for_marketplace", lambda _m: _FakeAdapter())
+
     items = tools.find_candidate_items(marketplace)
 
-    assert len(items) == len(tools._MECCHA_JAPAN_SEEDS)
-    assert all(item.site_name == "Meccha Japan" for item in items)
-    assert all(item.condition == "New" for item in items)
-    assert all(item.url.startswith("https://meccha-japan.com/en/search") for item in items)
-
-    seed_scores = {seed.title: tools._seed_priority_score(seed) for seed in tools._MECCHA_JAPAN_SEEDS}
-    item_scores = [seed_scores[item.title] for item in items]
-    assert item_scores == sorted(item_scores, reverse=True)
+    assert len(items) == 2
+    assert {i.url for i in items} == {"https://example.com/a", "https://example.com/b"}
+    assert all(i.site_name == "Nin-Nin-Game" for i in items)
 
 
 def test_find_candidate_items_for_unknown_marketplace_returns_empty() -> None:
@@ -61,13 +71,68 @@ def test_find_candidate_items_for_unknown_marketplace_returns_empty() -> None:
     assert tools.find_candidate_items(unknown) == []
 
 
-def test_meccha_search_url_encodes_query_terms() -> None:
-    url = tools._meccha_search_url("one piece portrait pirates")
-
-    assert url == (
-        "https://meccha-japan.com/en/search?controller=search"
-        "&s=one+piece+portrait+pirates"
+def test_find_candidate_items_marks_fetch_error_status(monkeypatch: Any) -> None:
+    marketplace = MarketplaceSite(
+        name="Nin-Nin-Game",
+        country="Japan",
+        url="https://www.nin-nin-game.com/en/",
+        reason="catalog",
     )
+
+    class _FakeAdapter:
+        last_fetch_meta = {"blocked": 0, "fetch_errors": 2, "parse_misses": 0, "live_items": 0, "fallback_items": 0}
+
+        def fetch_candidates(
+            self,
+            limit: int,
+            timeout_seconds: float = 10,
+            retries: int = 2,
+            allow_fallback: bool = False,
+        ) -> list[CandidateItem]:
+            return []
+
+    monkeypatch.setattr(tools, "_get_adapter_for_marketplace", lambda _m: _FakeAdapter())
+    tools.reset_source_diagnostics()
+
+    items = tools.find_candidate_items(marketplace)
+
+    assert items == []
+    assert tools.LAST_SOURCE_DIAGNOSTICS[marketplace.name]["status"] == "fetch_error"
+
+
+def test_find_candidate_items_strict_live_skips_non_required_source(monkeypatch: Any) -> None:
+    marketplace = MarketplaceSite(
+        name="Nin-Nin-Game",
+        country="Japan",
+        url="https://www.nin-nin-game.com/en/",
+        reason="catalog",
+    )
+
+    class _Descriptor:
+        strict_live_required = False
+
+    class _FakeAdapter:
+        descriptor = _Descriptor()
+        last_fetch_meta = {"blocked": 0, "fetch_errors": 1, "parse_misses": 0, "live_items": 0, "fallback_items": 0}
+
+        def fetch_candidates(
+            self,
+            limit: int,
+            timeout_seconds: float = 10,
+            retries: int = 2,
+            allow_fallback: bool = False,
+        ) -> list[CandidateItem]:
+            return []
+
+    monkeypatch.setattr(tools, "_get_adapter_for_marketplace", lambda _m: _FakeAdapter())
+    tools.SOURCE_RUNTIME.strict_live = True
+    tools.reset_source_diagnostics()
+
+    items = tools.find_candidate_items(marketplace)
+
+    assert items == []
+    assert tools.LAST_SOURCE_DIAGNOSTICS[marketplace.name]["status"] == "fetch_error"
+    tools.SOURCE_RUNTIME.strict_live = False
 
 
 def test_safe_fetch_ebay_price_snapshots_parses_and_filters(monkeypatch: Any) -> None:
@@ -126,9 +191,9 @@ def test_safe_fetch_ebay_price_snapshots_returns_empty_on_network_error(monkeypa
 def test_assess_profitability_uses_fallback_when_no_prices(monkeypatch: Any) -> None:
     monkeypatch.setattr(tools, "_safe_fetch_ebay_price_snapshots", lambda _query: [])
     item = CandidateItem(
-        site_name="Meccha Japan",
+        site_name="Nin-Nin-Game",
         title="Test Item",
-        url="https://meccha-japan.com/item",
+        url="https://example.com/item",
         source_price_gbp=100.0,
         shipping_to_uk_gbp=20.0,
         condition="New",
@@ -145,9 +210,9 @@ def test_assess_profitability_uses_fallback_when_no_prices(monkeypatch: Any) -> 
 
 def test_assess_profitability_confidence_medium_and_high(monkeypatch: Any) -> None:
     item = CandidateItem(
-        site_name="Meccha Japan",
+        site_name="Nin-Nin-Game",
         title="Confidence Item",
-        url="https://meccha-japan.com/item",
+        url="https://example.com/item",
         source_price_gbp=10.0,
         shipping_to_uk_gbp=5.0,
         condition="New",

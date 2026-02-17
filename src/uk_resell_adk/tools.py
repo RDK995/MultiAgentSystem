@@ -1,186 +1,221 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from statistics import median
+"""Tool functions used by both the CLI dry-run and ADK agents.
 
-from urllib.parse import quote_plus, urlencode
+Design goals:
+- Keep each tool deterministic and easy to reason about.
+- Centralize diagnostics/status generation for source fetches.
+- Preserve compatibility with existing tests and reports.
+"""
+
+from dataclasses import dataclass
+import logging
+from statistics import median
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from uk_resell_adk.models import CandidateItem, MarketplaceSite, ProfitabilityAssessment
+from uk_resell_adk.sources import HLJAdapter, NinNinGameAdapter
+from uk_resell_adk.sources.base import SourceAdapter
+from uk_resell_adk.sources.common import configure_debug
 from uk_resell_adk.tracing import traceable
 
 
-USER_AGENT = "uk-resell-adk/0.1 (+research assistant)"
+USER_AGENT = "uk-resell-adk/0.2 (+research assistant)"
+LOGGER = logging.getLogger(__name__)
 
 # eBay UK private seller baseline (non-vehicle categories):
 # "No transaction or final value fees" for UK-based private sellers.
 # Source: https://www.ebay.co.uk/help/fees-credits-invoices/selling-fees/fees-private-sellers?id=4822
 EBAY_FINAL_VALUE_FEE_RATE = 0.0
 EBAY_PER_ORDER_FEE_GBP = 0.0
+DEFAULT_SOURCE_ITEM_LIMIT = 12
 
 
-@dataclass(frozen=True, slots=True)
-class _MecchaSeed:
-    title: str
-    query: str
-    source_price_gbp: float
-    shipping_to_uk_gbp: float
-    demand_weight: float
-    competition_penalty: float
-    volatility_penalty: float
+@dataclass
+class SourceRuntimeOptions:
+    """Runtime flags that control source-fetch behavior."""
+
+    allow_fallback: bool = False
+    strict_live: bool = False
+    debug_sources: bool = False
+    debug_dir: str = "debug/sources"
 
 
-_MECCHA_JAPAN_SEEDS: tuple[_MecchaSeed, ...] = (
-    _MecchaSeed(
-        title="Pokemon Center Japan Exclusive Plush (seasonal release)",
-        query="pokemon center japan exclusive plush",
-        source_price_gbp=28.0,
-        shipping_to_uk_gbp=16.0,
-        demand_weight=9.1,
-        competition_penalty=2.4,
-        volatility_penalty=1.2,
-    ),
-    _MecchaSeed(
-        title="Bandai Metal Build Gundam figure (Japan release)",
-        query="bandai metal build gundam japan",
-        source_price_gbp=170.0,
-        shipping_to_uk_gbp=22.0,
-        demand_weight=8.4,
-        competition_penalty=2.8,
-        volatility_penalty=2.2,
-    ),
-    _MecchaSeed(
-        title="S.H.Figuarts Dragon Ball event-limited figure",
-        query="sh figuarts dragon ball event limited",
-        source_price_gbp=72.0,
-        shipping_to_uk_gbp=18.0,
-        demand_weight=8.7,
-        competition_penalty=2.6,
-        volatility_penalty=1.9,
-    ),
-    _MecchaSeed(
-        title="One Piece Portrait.Of.Pirates limited statue",
-        query="one piece portrait of pirates limited",
-        source_price_gbp=118.0,
-        shipping_to_uk_gbp=21.0,
-        demand_weight=8.3,
-        competition_penalty=2.3,
-        volatility_penalty=2.1,
-    ),
-    _MecchaSeed(
-        title="Studio Ghibli Donguri collectible figure",
-        query="studio ghibli donguri collectible figure",
-        source_price_gbp=34.0,
-        shipping_to_uk_gbp=17.0,
-        demand_weight=7.9,
-        competition_penalty=2.0,
-        volatility_penalty=1.4,
-    ),
-    _MecchaSeed(
-        title="Sanrio Japan collaboration mascot keychain set",
-        query="sanrio japan collaboration mascot keychain set",
-        source_price_gbp=24.0,
-        shipping_to_uk_gbp=16.0,
-        demand_weight=8.1,
-        competition_penalty=2.2,
-        volatility_penalty=1.3,
-    ),
-    _MecchaSeed(
-        title="Pokemon Card Japanese special set box (sealed)",
-        query="pokemon card japanese special set box sealed",
-        source_price_gbp=62.0,
-        shipping_to_uk_gbp=18.0,
-        demand_weight=9.0,
-        competition_penalty=3.2,
-        volatility_penalty=2.5,
-    ),
-    _MecchaSeed(
-        title="Blue Lock Japan-only acrylic stand collection",
-        query="blue lock japan only acrylic stand",
-        source_price_gbp=21.0,
-        shipping_to_uk_gbp=15.0,
-        demand_weight=7.5,
-        competition_penalty=1.8,
-        volatility_penalty=1.1,
-    ),
+SOURCE_RUNTIME = SourceRuntimeOptions()
+LAST_SOURCE_DIAGNOSTICS: dict[str, dict] = {}
+
+SOURCE_ADAPTERS: tuple[SourceAdapter, ...] = (
+    HLJAdapter(),
+    NinNinGameAdapter(),
 )
 
 
-def _meccha_search_url(query: str) -> str:
-    return f"https://meccha-japan.com/en/search?controller=search&s={quote_plus(query)}"
+def _get_adapter_for_marketplace(marketplace: MarketplaceSite) -> SourceAdapter | None:
+    """Resolve a source adapter by marketplace display name."""
+    name = marketplace.name.strip().lower()
+    for adapter in SOURCE_ADAPTERS:
+        if adapter.descriptor.name.lower() == name:
+            return adapter
+    return None
 
 
-def _seed_priority_score(seed: _MecchaSeed) -> float:
-    """Rank products by resale potential and listing risk.
+def _dedupe_items_by_url(items: list[CandidateItem]) -> list[CandidateItem]:
+    """Deduplicate candidate items by normalized URL while preserving order."""
+    deduped: list[CandidateItem] = []
+    seen_urls: set[str] = set()
+    for item in items:
+        key = item.url.strip().lower()
+        if not key or key in seen_urls:
+            continue
+        seen_urls.add(key)
+        deduped.append(item)
+    return deduped
 
-    This replaces the old static marketplace mapping with category-aware scoring,
-    giving preference to strong UK demand while penalizing volatile categories.
+
+def _resolve_source_status(*, live_count: int, fallback_count: int, blocked_count: int, parse_miss_count: int, error_count: int) -> str:
+    """Collapse counters into a single report status.
+
+    Priority is intentionally strict so root causes are obvious in reports:
+    live > blocked > fetch_error > parse_failed > fallback > no_data.
     """
+    if live_count > 0:
+        return "live"
+    if blocked_count > 0:
+        return "blocked"
+    if error_count > 0:
+        return "fetch_error"
+    if parse_miss_count > 0:
+        return "parse_failed"
+    if fallback_count > 0:
+        return "fallback"
+    return "no_data"
 
-    landed_cost = seed.source_price_gbp + seed.shipping_to_uk_gbp
-    landed_cost_penalty = landed_cost / 90
-    return (
-        seed.demand_weight
-        - seed.competition_penalty
-        - seed.volatility_penalty
-        - landed_cost_penalty
-    )
+
+def _record_source_diagnostics(
+    *,
+    source_name: str,
+    status: str,
+    live_count: int,
+    fallback_count: int,
+    blocked_count: int,
+    parse_miss_count: int,
+    error_count: int,
+) -> None:
+    LAST_SOURCE_DIAGNOSTICS[source_name] = {
+        "source_name": source_name,
+        "status": status,
+        "live_count": live_count,
+        "fallback_count": fallback_count,
+        "blocked_count": blocked_count,
+        "parse_miss_count": parse_miss_count,
+        "error_count": error_count,
+    }
+
+
+def configure_source_runtime(
+    *,
+    allow_fallback: bool = False,
+    strict_live: bool = False,
+    debug_sources: bool = False,
+    debug_dir: str = "debug/sources",
+) -> None:
+    """Apply runtime options for source adapters and shared debug capture."""
+    SOURCE_RUNTIME.allow_fallback = allow_fallback
+    SOURCE_RUNTIME.strict_live = strict_live
+    SOURCE_RUNTIME.debug_sources = debug_sources
+    SOURCE_RUNTIME.debug_dir = debug_dir
+    configure_debug(debug_sources, debug_dir)
+
+
+def reset_source_diagnostics() -> None:
+    LAST_SOURCE_DIAGNOSTICS.clear()
+
+
+def get_source_diagnostics() -> list[dict]:
+    return [LAST_SOURCE_DIAGNOSTICS[k] for k in sorted(LAST_SOURCE_DIAGNOSTICS.keys())]
 
 
 @traceable(name="discover_foreign_marketplaces", run_type="tool")
 def discover_foreign_marketplaces() -> list[MarketplaceSite]:
-    """Agent 1 tool: return foreign marketplaces frequently used for export arbitrage.
-
-    This is deliberately curated because many marketplaces have anti-bot terms and rate limits.
-    In production, replace this with a compliant search/index source and jurisdiction checks.
-    """
-
+    """Return configured source marketplaces exposed to the workflow."""
     return [
         MarketplaceSite(
-            name="Meccha Japan",
-            country="Japan",
-            url="https://meccha-japan.com/",
-            reason=(
-                "Focused catalog of Japan-exclusive anime, gaming, and collectible products "
-                "that resellers can source with clearer product specificity than auction feeds."
-            ),
-        ),
+            name=adapter.descriptor.name,
+            country=adapter.descriptor.country,
+            url=adapter.descriptor.home_url,
+            reason=adapter.descriptor.reason,
+        )
+        for adapter in SOURCE_ADAPTERS
     ]
 
 
 @traceable(name="find_candidate_items", run_type="tool")
 def find_candidate_items(marketplace: MarketplaceSite) -> list[CandidateItem]:
-    """Agent 2 tool: seed examples per marketplace.
-
-    Keep the output structured and conservative; do not claim live availability unless
-    a compliant live search integration is attached.
-    """
-
-    if marketplace.name != "Meccha Japan":
+    """Fetch candidate items from one marketplace and update diagnostics."""
+    adapter = _get_adapter_for_marketplace(marketplace)
+    if adapter is None:
         return []
 
-    ranked_seeds = sorted(_MECCHA_JAPAN_SEEDS, key=_seed_priority_score, reverse=True)
-    return [
-        CandidateItem(
-            site_name=marketplace.name,
-            title=seed.title,
-            url=_meccha_search_url(seed.query),
-            source_price_gbp=seed.source_price_gbp,
-            shipping_to_uk_gbp=seed.shipping_to_uk_gbp,
-            condition="New",
+    try:
+        raw_items = list(
+            adapter.fetch_candidates(
+                limit=DEFAULT_SOURCE_ITEM_LIMIT,
+                allow_fallback=SOURCE_RUNTIME.allow_fallback,
+            )
         )
-        for seed in ranked_seeds
-    ]
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("Source adapter fetch failed for %s: %s", marketplace.name, exc)
+        _record_source_diagnostics(
+            source_name=marketplace.name,
+            status="fetch_error",
+            live_count=0,
+            fallback_count=0,
+            blocked_count=0,
+            parse_miss_count=0,
+            error_count=1,
+        )
+        return []
+
+    deduped = _dedupe_items_by_url(raw_items)
+    live_count = sum(1 for x in deduped if x.data_origin == "live")
+    fallback_count = sum(1 for x in deduped if x.data_origin == "fallback")
+
+    meta = getattr(adapter, "last_fetch_meta", {}) or {}
+    blocked_count = int(meta.get("blocked", 0))
+    parse_miss_count = int(meta.get("parse_misses", 0))
+    error_count = int(meta.get("fetch_errors", 0))
+    status = _resolve_source_status(
+        live_count=live_count,
+        fallback_count=fallback_count,
+        blocked_count=blocked_count,
+        parse_miss_count=parse_miss_count,
+        error_count=error_count,
+    )
+
+    _record_source_diagnostics(
+        source_name=marketplace.name,
+        status=status,
+        live_count=live_count,
+        fallback_count=fallback_count,
+        blocked_count=blocked_count,
+        parse_miss_count=parse_miss_count,
+        error_count=error_count,
+    )
+
+    if SOURCE_RUNTIME.strict_live and adapter.descriptor.strict_live_required and live_count == 0:
+        raise RuntimeError(
+            f"Strict live mode: source '{marketplace.name}' returned zero live candidates (status={status})."
+        )
+
+    if not deduped:
+        LOGGER.warning("No candidates found for source: %s (status=%s)", marketplace.name, status)
+
+    return deduped
 
 
 @traceable(name="_safe_fetch_ebay_price_snapshots", run_type="tool")
 def _safe_fetch_ebay_price_snapshots(query: str) -> list[float]:
-    """Fetch rough sold-price snapshots from eBay search page JSON snippets.
-
-    This lightweight fallback avoids requiring API keys. For production usage, replace with
-    official eBay Browse API / Marketplace Insights API and robust parsing.
-    """
-
     endpoint = "https://www.ebay.co.uk/sch/i.html"
     params = {
         "_nkw": query,
@@ -188,16 +223,16 @@ def _safe_fetch_ebay_price_snapshots(query: str) -> list[float]:
         "LH_Complete": "1",
         "rt": "nc",
     }
-    headers = {"User-Agent": USER_AGENT}
+    request = Request(f"{endpoint}?{urlencode(params)}", headers={"User-Agent": USER_AGENT})
 
-    query = urlencode(params)
-    request = Request(f"{endpoint}?{query}", headers=headers)
     try:
         with urlopen(request, timeout=10) as response:
             content = response.read().decode("utf-8", errors="ignore")
     except Exception:
         return []
 
+    # Simple token-based extraction is intentionally lightweight and resilient
+    # to minor eBay HTML changes.
     prices: list[float] = []
     for token in content.split("\u00a3"):
         number = []
@@ -222,8 +257,7 @@ def _safe_fetch_ebay_price_snapshots(query: str) -> list[float]:
 
 @traceable(name="assess_profitability_against_ebay", run_type="tool")
 def assess_profitability_against_ebay(item: CandidateItem) -> ProfitabilityAssessment:
-    """Agent 3 tool: estimate arbitrage profitability from eBay sold-price snapshots."""
-
+    """Estimate resale profitability using eBay sold listing snapshots."""
     sold_prices = _safe_fetch_ebay_price_snapshots(item.title)
     benchmark = median(sold_prices) if sold_prices else item.source_price_gbp * 1.35
 

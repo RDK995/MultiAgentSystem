@@ -1,14 +1,13 @@
 from __future__ import annotations
 
+"""ADK agent graph wiring for the resale workflow."""
+
 from google.adk.agents import LlmAgent, SequentialAgent
 from google.adk.tools import FunctionTool
 
 from uk_resell_adk.config import RuntimeConfig
+from uk_resell_adk.tools import assess_profitability_against_ebay, find_candidate_items
 from uk_resell_adk.tracing import traceable
-from uk_resell_adk.tools import (
-    assess_profitability_against_ebay,
-    find_candidate_items,
-)
 
 
 @traceable(name="build_multi_agent_system", run_type="chain")
@@ -26,8 +25,10 @@ def build_multi_agent_system(config: RuntimeConfig) -> SequentialAgent:
         name="item_sourcing_agent",
         model=config.model_name,
         instruction=(
-            "Focus only on Meccha Japan as the sourcing channel. "
-            "Call find_candidate_items and return product-specific candidates "
+            "Focus on Japanese trading card sources that ship to the UK: "
+            "HobbyLink Japan and Nin-Nin-Game. "
+            "Call find_candidate_items for each source and return product-specific candidates "
+            "for trading cards only (booster boxes, decks, singles where available), "
             "with landed-cost assumptions suitable for UK resale validation."
         ),
         tools=[FunctionTool(find_candidate_items)],
@@ -55,14 +56,8 @@ def build_multi_agent_system(config: RuntimeConfig) -> SequentialAgent:
         output_key="lead_report",
     )
 
-    orchestrator_agent = SequentialAgent(
+    return SequentialAgent(
         name="uk_resell_orchestrator",
         description="Top-level orchestrator that coordinates all specialist agents and answers users.",
-        sub_agents=[
-            item_sourcing_agent,
-            profitability_agent,
-            report_writer_agent,
-        ],
+        sub_agents=[item_sourcing_agent, profitability_agent, report_writer_agent],
     )
-
-    return orchestrator_agent

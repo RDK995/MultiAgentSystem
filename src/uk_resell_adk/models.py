@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+"""Shared data models passed between scraping, analysis, and reporting."""
+
 from dataclasses import asdict, dataclass
 
 
 @dataclass(slots=True)
 class MarketplaceSite:
+    """A source marketplace included in candidate discovery."""
+
     name: str
     country: str
     url: str
@@ -16,12 +20,17 @@ class MarketplaceSite:
 
 @dataclass(slots=True)
 class CandidateItem:
+    """A source listing suitable for resale analysis."""
+
     site_name: str
     title: str
     url: str
     source_price_gbp: float
     shipping_to_uk_gbp: float
     condition: str
+    source_id: str = ""
+    fetched_at_utc: str = ""
+    data_origin: str = "unknown"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -29,6 +38,8 @@ class CandidateItem:
 
 @dataclass(slots=True)
 class ProfitabilityAssessment:
+    """Profitability view derived from source cost + eBay benchmark signals."""
+
     item_title: str
     item_url: str
     total_landed_cost_gbp: float
@@ -44,6 +55,8 @@ class ProfitabilityAssessment:
 
 @dataclass(slots=True)
 class ResellLeadReport:
+    """Structured narrative report grouped by confidence bands."""
+
     executive_summary: str
     high_confidence_leads: list[ProfitabilityAssessment]
     medium_confidence_leads: list[ProfitabilityAssessment]

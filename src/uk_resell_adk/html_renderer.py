@@ -1,26 +1,64 @@
 from __future__ import annotations
 
-import html
+"""HTML report rendering helpers.
+
+The renderer intentionally keeps logic local and template-free so output remains
+predictable and testable.
+"""
+
 from datetime import datetime, timezone
+import html
 from pathlib import Path
 
 
-def build_html_report(result: dict) -> str:
-    marketplaces = result["marketplaces"]
-    candidate_items = result["candidate_items"]
-    assessments = sorted(result["assessments"], key=lambda x: x["estimated_profit_gbp"], reverse=True)
+def _origin_label_and_class(origin: str) -> tuple[str, str]:
+    if origin == "live":
+        return "Live Scrape", "live"
+    if origin == "fallback":
+        return "Fallback", "fallback"
+    return "Unknown", "unknown"
 
-    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    rows = []
+
+def _build_source_lines(marketplaces: list[dict]) -> str:
+    return "".join(
+        f"<li><strong>{html.escape(site['name'])}</strong> ({html.escape(site['country'])}) - "
+        f"<a href=\"{html.escape(site['url'])}\" target=\"_blank\">{html.escape(site['url'])}</a><br>"
+        f"{html.escape(site['reason'])}</li>"
+        for site in marketplaces
+    )
+
+
+def _build_diagnostics_rows(source_diagnostics: list[dict]) -> str:
+    rows = "".join(
+        "<tr>"
+        f"<td>{html.escape(str(d.get('source_name', '')))}</td>"
+        f"<td>{html.escape(str(d.get('status', '')))}</td>"
+        f"<td>{int(d.get('live_count', 0))}</td>"
+        f"<td>{int(d.get('fallback_count', 0))}</td>"
+        f"<td>{int(d.get('blocked_count', 0))}</td>"
+        f"<td>{int(d.get('parse_miss_count', 0))}</td>"
+        f"<td>{int(d.get('error_count', 0))}</td>"
+        "</tr>"
+        for d in source_diagnostics
+    )
+    return rows or '<tr><td colspan="7">No diagnostics.</td></tr>'
+
+
+def _build_assessment_rows(assessments: list[dict], origin_by_url: dict[str, str]) -> str:
+    rows: list[str] = []
     for item in assessments:
         margin = float(item["estimated_margin_percent"])
         profit = float(item["estimated_profit_gbp"])
         profit_class = "good" if profit >= 0 else "bad"
         margin_class = "good" if margin >= 0 else "bad"
+        origin = origin_by_url.get(item["item_url"], "unknown")
+        origin_label, origin_class = _origin_label_and_class(origin)
+
         rows.append(
             "<tr>"
             f"<td>{html.escape(item['item_title'])}</td>"
             f"<td><a href=\"{html.escape(item['item_url'])}\" target=\"_blank\">Link</a></td>"
+            f"<td><span class=\"tag {origin_class}\">{origin_label}</span></td>"
             f"<td>GBP {item['total_landed_cost_gbp']:.2f}</td>"
             f"<td>GBP {item['ebay_median_sale_price_gbp']:.2f}</td>"
             f"<td>GBP {item['estimated_fees_gbp']:.2f}</td>"
@@ -29,13 +67,34 @@ def build_html_report(result: dict) -> str:
             f"<td>{html.escape(item['confidence'])}</td>"
             "</tr>"
         )
+    return "".join(rows)
 
-    marketplace_lines = "".join(
-        f"<li><strong>{html.escape(site['name'])}</strong> ({html.escape(site['country'])}) - "
-        f"<a href=\"{html.escape(site['url'])}\" target=\"_blank\">{html.escape(site['url'])}</a><br>"
-        f"{html.escape(site['reason'])}</li>"
-        for site in marketplaces
-    )
+
+def build_html_report(result: dict) -> str:
+    """Render the report as a standalone HTML document."""
+    marketplaces = result["marketplaces"]
+    candidate_items = result["candidate_items"]
+    assessments = sorted(result["assessments"], key=lambda x: x["estimated_profit_gbp"], reverse=True)
+    source_diagnostics = result.get("source_diagnostics", [])
+
+    by_source: dict[str, int] = {}
+    by_origin: dict[str, int] = {}
+    origin_by_url: dict[str, str] = {}
+    for item in candidate_items:
+        source_name = item["site_name"]
+        by_source[source_name] = by_source.get(source_name, 0) + 1
+
+        origin = str(item.get("data_origin", "unknown")).lower()
+        by_origin[origin] = by_origin.get(origin, 0) + 1
+        origin_by_url[str(item.get("url", ""))] = origin
+
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    assessment_rows = _build_assessment_rows(assessments, origin_by_url)
+    marketplace_lines = _build_source_lines(marketplaces)
+    diagnostics_rows = _build_diagnostics_rows(source_diagnostics)
+
+    by_source_lines = "".join(f"<li>{html.escape(k)}: {v}</li>" for k, v in sorted(by_source.items()))
+    by_origin_lines = "".join(f"<li>{html.escape(k.title())}: {v}</li>" for k, v in sorted(by_origin.items()))
 
     return f"""<!doctype html>
 <html lang=\"en\">
@@ -55,6 +114,10 @@ def build_html_report(result: dict) -> str:
     th {{ background: #f9fafb; }}
     .good {{ color: #065f46; font-weight: 600; }}
     .bad {{ color: #991b1b; font-weight: 600; }}
+    .tag {{ display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }}
+    .tag.live {{ background: #dcfce7; color: #065f46; }}
+    .tag.fallback {{ background: #fee2e2; color: #991b1b; }}
+    .tag.unknown {{ background: #e5e7eb; color: #374151; }}
   </style>
 </head>
 <body>
@@ -71,6 +134,33 @@ def build_html_report(result: dict) -> str:
     <h2>Source Marketplace</h2>
     <ul>{marketplace_lines}</ul>
   </div>
+  <div class=\"card\">
+    <h2>Candidate Count by Source</h2>
+    <ul>{by_source_lines or '<li>No candidates found.</li>'}</ul>
+  </div>
+  <div class=\"card\">
+    <h2>Data Provenance</h2>
+    <ul>{by_origin_lines or '<li>No provenance data.</li>'}</ul>
+  </div>
+  <div class=\"card\">
+    <h2>Source Diagnostics</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Source</th>
+          <th>Status</th>
+          <th>Live</th>
+          <th>Fallback</th>
+          <th>Blocked</th>
+          <th>Parse Misses</th>
+          <th>Errors</th>
+        </tr>
+      </thead>
+      <tbody>
+        {diagnostics_rows}
+      </tbody>
+    </table>
+  </div>
 
   <div class=\"card\">
     <h2>Profitability Assessments</h2>
@@ -79,6 +169,7 @@ def build_html_report(result: dict) -> str:
         <tr>
           <th>Item</th>
           <th>Source</th>
+          <th>Data Origin</th>
           <th>Landed Cost</th>
           <th>eBay Median</th>
           <th>Fees</th>
@@ -88,7 +179,7 @@ def build_html_report(result: dict) -> str:
         </tr>
       </thead>
       <tbody>
-        {''.join(rows)}
+        {assessment_rows}
       </tbody>
     </table>
   </div>

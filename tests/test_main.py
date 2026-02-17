@@ -11,17 +11,17 @@ from uk_resell_adk import main
 SAMPLE_RESULT = {
     "marketplaces": [
         {
-            "name": "Meccha Japan",
+            "name": "HobbyLink Japan",
             "country": "Japan",
-            "url": "https://meccha-japan.com/",
+            "url": "https://www.hlj.com/",
             "reason": "focused catalog",
         }
     ],
     "candidate_items": [
         {
-            "site_name": "Meccha Japan",
+            "site_name": "HobbyLink Japan",
             "title": "Item A",
-            "url": "https://meccha-japan.com/a",
+            "url": "https://www.hlj.com/a",
             "source_price_gbp": 20.0,
             "shipping_to_uk_gbp": 10.0,
             "condition": "New",
@@ -30,7 +30,7 @@ SAMPLE_RESULT = {
     "assessments": [
         {
             "item_title": "Low",
-            "item_url": "https://meccha-japan.com/l",
+            "item_url": "https://www.hlj.com/l",
             "total_landed_cost_gbp": 100.0,
             "ebay_median_sale_price_gbp": 90.0,
             "estimated_fees_gbp": 10.0,
@@ -40,7 +40,7 @@ SAMPLE_RESULT = {
         },
         {
             "item_title": "High",
-            "item_url": "https://meccha-japan.com/h",
+            "item_url": "https://www.hlj.com/h",
             "total_landed_cost_gbp": 100.0,
             "ebay_median_sale_price_gbp": 160.0,
             "estimated_fees_gbp": 20.0,
@@ -56,18 +56,18 @@ def test_run_local_dry_run_respects_config_limits(monkeypatch: Any) -> None:
     from uk_resell_adk.models import CandidateItem, MarketplaceSite, ProfitabilityAssessment
 
     original_sites = main.DEFAULT_CONFIG.max_foreign_sites
-    original_items = main.DEFAULT_CONFIG.max_items_per_site
+    original_items = main.DEFAULT_CONFIG.max_items_per_source
 
     try:
         main.DEFAULT_CONFIG.max_foreign_sites = 1
-        main.DEFAULT_CONFIG.max_items_per_site = 2
+        main.DEFAULT_CONFIG.max_items_per_source = 2
 
         monkeypatch.setattr(
             main,
             "discover_foreign_marketplaces",
             lambda: [
-                MarketplaceSite("Meccha Japan", "Japan", "https://meccha-japan.com", "a"),
-                MarketplaceSite("Ignored", "Japan", "https://x.com", "b"),
+                MarketplaceSite("HobbyLink Japan", "Japan", "https://www.hlj.com", "a"),
+                MarketplaceSite("Nin-Nin-Game", "Japan", "https://www.nin-nin-game.com/en/", "b"),
             ],
         )
 
@@ -75,9 +75,9 @@ def test_run_local_dry_run_respects_config_limits(monkeypatch: Any) -> None:
             main,
             "find_candidate_items",
             lambda _m: [
-                CandidateItem("Meccha Japan", "A", "u1", 1.0, 1.0, "New"),
-                CandidateItem("Meccha Japan", "B", "u2", 1.0, 1.0, "New"),
-                CandidateItem("Meccha Japan", "C", "u3", 1.0, 1.0, "New"),
+                CandidateItem("HobbyLink Japan", "A", "u1", 1.0, 1.0, "New"),
+                CandidateItem("HobbyLink Japan", "B", "u2", 1.0, 1.0, "New"),
+                CandidateItem("HobbyLink Japan", "C", "u3", 1.0, 1.0, "New"),
             ],
         )
 
@@ -103,7 +103,7 @@ def test_run_local_dry_run_respects_config_limits(monkeypatch: Any) -> None:
         assert len(result["assessments"]) == 2
     finally:
         main.DEFAULT_CONFIG.max_foreign_sites = original_sites
-        main.DEFAULT_CONFIG.max_items_per_site = original_items
+        main.DEFAULT_CONFIG.max_items_per_source = original_items
 
 
 def test_main_json_mode_writes_json_to_stdout_and_report_notice_to_stderr(
@@ -118,7 +118,7 @@ def test_main_json_mode_writes_json_to_stdout_and_report_notice_to_stderr(
 
     captured = capsys.readouterr()
     parsed = json.loads(captured.out)
-    assert parsed["marketplaces"][0]["name"] == "Meccha Japan"
+    assert parsed["marketplaces"][0]["name"] == "HobbyLink Japan"
     assert "HTML report written to" in captured.err
     assert out.exists()
 
