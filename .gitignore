@@ -1,5 +1,8 @@
 __pycache__/
 *.pyc
+*.egg-info/
 .env
 .env.*
 !.env.example
+reports/
+debug/

@@ -1,29 +1,36 @@
 # Google ADK Multi-Agent UK Resell Lead System
 
-This repository contains a Google ADK-oriented multi-agent system for identifying cross-border resale opportunities into the UK.
+This project runs a Google ADK-oriented sourcing pipeline to identify UK resale opportunities from Japanese trading-card retailers.
+
+## Current Scope
+
+- Category focus: trading cards (Pokemon, One Piece, Yu-Gi-Oh, Digimon, related TCG products).
+- Active sources:
+  - HobbyLink Japan (`https://www.hlj.com/`)
+  - Nin-Nin-Game (`https://www.nin-nin-game.com/en/`)
+- Output: JSON (optional) plus a formatted timestamped HTML report.
 
 ## Agent Design
 
-The system follows an orchestrator + specialist pattern:
+The ADK graph is a simple orchestrator + specialists sequence:
 
-1. **Orchestrator Agent** (`uk_resell_orchestrator`)
-   - Manages the end-to-end workflow.
-   - Interacts with the user and consolidates outputs from specialist agents.
-2. **Agent 1: Marketplace Discovery**
-   - Focuses on Meccha Japan as the primary sourcing marketplace for Japan-exclusive products.
-3. **Agent 2: Item Sourcing**
-   - Finds candidate items on the discovered marketplaces.
-4. **Agent 3: Profitability Analysis**
-   - Cross-references candidate items with `ebay.co.uk` sold-price signals.
-5. **Agent 4: Data Lead Report Writer**
-   - Produces a lead report with confidence levels, risks, and recommendations.
+1. `item_sourcing_agent`
+   - Calls `find_candidate_items` for configured sources.
+2. `profitability_agent`
+   - Calls `assess_profitability_against_ebay` for each candidate.
+3. `report_writer_agent`
+   - Produces a structured lead report.
+4. `uk_resell_orchestrator`
+   - Parent `SequentialAgent` combining all stages.
 
 ## Project Layout
 
 - `src/uk_resell_adk/agents.py` – ADK multi-agent construction
-- `src/uk_resell_adk/tools.py` – function tools used by specialist agents
-- `src/uk_resell_adk/app.py` – exports `root_agent` for ADK runtime
-- `src/uk_resell_adk/main.py` – local dry-run entrypoint (non-ADK fallback)
+- `src/uk_resell_adk/tools.py` – tool functions and source diagnostics
+- `src/uk_resell_adk/sources/` – source adapters and shared parsing helpers
+- `src/uk_resell_adk/html_renderer.py` – HTML report generation
+- `src/uk_resell_adk/main.py` – local dry-run CLI entrypoint
+- `src/uk_resell_adk/app.py` – exposes `root_agent` for ADK runtime
 
 ## Quick Start
 
@@ -34,37 +41,32 @@ pip install -e .
 python -m uk_resell_adk.main --json
 ```
 
-Each run also writes a formatted HTML report to a unique timestamped file, for example `reports/uk_resell_report_20260216_164500.html`.
-You can override the path with `--html-out`, for example:
+## CLI Flags
 
-```bash
-python -m uk_resell_adk.main --html-out reports/latest.html
-```
+- `--json` print workflow payload as JSON
+- `--html-out <path>` write report to a fixed path
+- `--allow-fallback` allow static fallback catalog items when live scrape fails
+- `--strict-live` fail run when a required source has zero live candidates
+- `--debug-sources` write raw source snapshots to debug folder
+- `--debug-dir <path>` set debug snapshot directory (default `debug/sources`)
 
+By default, reports are written to unique files like `reports/uk_resell_report_20260217_204113.html`.
 
 ## LangSmith Tracing
 
-Tracing is integrated for the local workflow and ADK entrypoint. To enable it:
+Tracing is optional. Enable with:
 
 ```bash
 export LANGSMITH_API_KEY="your-api-key"
-export LANGSMITH_TRACING="true"              # optional, auto-defaults to true when API key exists
-export LANGSMITH_PROJECT="uk-resell-adk"     # optional
+export LANGSMITH_TRACING="true"          # optional; auto-enabled when key is present
+export LANGSMITH_PROJECT="uk-resell-adk" # optional
 ```
 
 Traced spans include:
-- Local dry-run workflow
-- Agent system build step
-- Discovery/sourcing/profitability tool calls
+- `run_local_dry_run`
+- `build_multi_agent_system`
+- sourcing/profitability tool calls
 
-## Run with ADK
+## ADK Runtime
 
-If your environment has ADK CLI configured, point it at `uk_resell_adk.app:root_agent`.
-
-## Notes on Best Practice
-
-- Keep external APIs behind explicit tools (clear boundaries and testability).
-- Keep all model/runtime knobs in a central config object.
-- Return structured outputs from each agent stage for deterministic downstream processing.
-- Use compliant APIs for production data acquisition (especially marketplace scraping constraints).
-- Profitability currently assumes UK-based private seller eBay fees (0% final value baseline for eligible categories); adjust for business accounts or category-specific fees as needed.
+Use `uk_resell_adk.app:root_agent` as the ADK entrypoint.

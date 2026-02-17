@@ -79,7 +79,7 @@ def test_build_multi_agent_system_wires_expected_agents(monkeypatch: Any) -> Non
     assert report_agent.output_key == "lead_report"
 
 
-def test_item_sourcing_instruction_mentions_meccha_japan(monkeypatch: Any) -> None:
+def test_item_sourcing_instruction_mentions_supported_sources(monkeypatch: Any) -> None:
     monkeypatch.setattr(agents, "FunctionTool", _FakeFunctionTool)
     monkeypatch.setattr(agents, "LlmAgent", _FakeLlmAgent)
     monkeypatch.setattr(agents, "SequentialAgent", _FakeSequentialAgent)
@@ -87,5 +87,6 @@ def test_item_sourcing_instruction_mentions_meccha_japan(monkeypatch: Any) -> No
     orchestrator = agents.build_multi_agent_system(RuntimeConfig())
 
     item_agent = orchestrator.sub_agents[0]
-    assert "Meccha Japan" in item_agent.instruction
+    assert "HobbyLink Japan" in item_agent.instruction
+    assert "Nin-Nin-Game" in item_agent.instruction
     assert "find_candidate_items" in item_agent.instruction

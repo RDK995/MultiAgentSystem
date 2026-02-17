@@ -7,17 +7,36 @@ def test_build_html_report_uses_green_for_profitable_and_red_for_unprofitable() 
     result = {
         "marketplaces": [
             {
-                "name": "Meccha Japan",
+                "name": "HobbyLink Japan",
                 "country": "Japan",
-                "url": "https://meccha-japan.com/",
+                "url": "https://www.hlj.com/",
                 "reason": "focused catalog",
             }
         ],
-        "candidate_items": [],
+        "candidate_items": [
+            {
+                "site_name": "HobbyLink Japan",
+                "title": "Profit Item",
+                "url": "https://www.hlj.com/p",
+                "source_price_gbp": 70.0,
+                "shipping_to_uk_gbp": 15.0,
+                "condition": "New",
+                "data_origin": "live",
+            },
+            {
+                "site_name": "HobbyLink Japan",
+                "title": "Loss Item",
+                "url": "https://www.hlj.com/l",
+                "source_price_gbp": 70.0,
+                "shipping_to_uk_gbp": 15.0,
+                "condition": "New",
+                "data_origin": "fallback",
+            },
+        ],
         "assessments": [
             {
                 "item_title": "Profit Item",
-                "item_url": "https://meccha-japan.com/p",
+                "item_url": "https://www.hlj.com/p",
                 "total_landed_cost_gbp": 100.0,
                 "ebay_median_sale_price_gbp": 130.0,
                 "estimated_fees_gbp": 0.0,
@@ -27,7 +46,7 @@ def test_build_html_report_uses_green_for_profitable_and_red_for_unprofitable() 
             },
             {
                 "item_title": "Loss Item",
-                "item_url": "https://meccha-japan.com/l",
+                "item_url": "https://www.hlj.com/l",
                 "total_landed_cost_gbp": 100.0,
                 "ebay_median_sale_price_gbp": 80.0,
                 "estimated_fees_gbp": 0.0,
@@ -44,3 +63,7 @@ def test_build_html_report_uses_green_for_profitable_and_red_for_unprofitable() 
     assert "<td class=\"bad\">GBP -20.00</td>" in html
     assert "<td class=\"good\">30.00%</td>" in html
     assert "<td class=\"bad\">-20.00%</td>" in html
+    assert "Live Scrape" in html
+    assert "Fallback" in html
+    assert "<li>Live: 1</li>" in html
+    assert "<li>Fallback: 1</li>" in html

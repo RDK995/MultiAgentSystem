@@ -8,57 +8,81 @@ from pathlib import Path
 
 from uk_resell_adk.config import DEFAULT_CONFIG
 from uk_resell_adk.html_renderer import write_html_report
-from uk_resell_adk.tracing import configure_langsmith, traceable
 from uk_resell_adk.tools import (
     assess_profitability_against_ebay,
+    configure_source_runtime,
     discover_foreign_marketplaces,
     find_candidate_items,
+    get_source_diagnostics,
+    reset_source_diagnostics,
 )
+from uk_resell_adk.tracing import configure_langsmith, traceable
 
 
 @traceable(name="run_local_dry_run", run_type="chain")
 def run_local_dry_run() -> dict:
+    """Run the end-to-end sourcing pipeline without ADK runtime orchestration."""
+    reset_source_diagnostics()
     marketplaces = discover_foreign_marketplaces()[: DEFAULT_CONFIG.max_foreign_sites]
 
     candidates = []
     for market in marketplaces:
-        candidates.extend(find_candidate_items(market)[: DEFAULT_CONFIG.max_items_per_site])
+        candidates.extend(find_candidate_items(market)[: DEFAULT_CONFIG.max_items_per_source])
 
     assessments = [assess_profitability_against_ebay(item) for item in candidates]
-
     return {
         "marketplaces": [m.to_dict() for m in marketplaces],
         "candidate_items": [c.to_dict() for c in candidates],
         "assessments": [a.to_dict() for a in assessments],
+        "source_diagnostics": get_source_diagnostics(),
     }
 
 
 def _default_html_output_path() -> Path:
+    """Generate unique report names so historical runs are preserved."""
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     return Path("reports") / f"uk_resell_report_{timestamp}.html"
 
 
-def main() -> None:
-    configure_langsmith()
+def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="UK resale ADK multi-agent dry run helper")
     parser.add_argument("--json", action="store_true", help="Print workflow output as JSON")
+    parser.add_argument("--allow-fallback", action="store_true", help="Allow static fallback items when live scrape fails")
+    parser.add_argument("--strict-live", action="store_true", help="Fail run if any source returns no live candidates")
+    parser.add_argument("--debug-sources", action="store_true", help="Write source HTML snapshots to debug directory")
+    parser.add_argument("--debug-dir", default="debug/sources", help="Debug snapshot directory for --debug-sources")
     parser.add_argument(
         "--html-out",
         default=None,
         help="Path to write formatted HTML report (default: reports/uk_resell_report_<UTC timestamp>.html)",
     )
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    """CLI entrypoint."""
+    configure_langsmith()
+    args = _build_arg_parser().parse_args()
+
+    configure_source_runtime(
+        allow_fallback=args.allow_fallback,
+        strict_live=args.strict_live,
+        debug_sources=args.debug_sources,
+        debug_dir=args.debug_dir,
+    )
 
     result = run_local_dry_run()
     report_path = write_html_report(result, Path(args.html_out) if args.html_out else _default_html_output_path())
+
     if args.json:
         print(json.dumps(result, indent=2))
         print(f"HTML report written to: {report_path}", file=sys.stderr)
-    else:
-        print(f"Discovered marketplaces: {len(result['marketplaces'])}")
-        print(f"Candidate items: {len(result['candidate_items'])}")
-        print(f"Profitability assessments: {len(result['assessments'])}")
-        print(f"HTML report written to: {report_path}")
+        return
+
+    print(f"Discovered marketplaces: {len(result['marketplaces'])}")
+    print(f"Candidate items: {len(result['candidate_items'])}")
+    print(f"Profitability assessments: {len(result['assessments'])}")
+    print(f"HTML report written to: {report_path}")
 
 
 if __name__ == "__main__":
