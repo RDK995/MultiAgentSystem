@@ -97,10 +97,12 @@ def _langfuse_trace_identity_decorator() -> Callable[[F], F]:
 
             if _langfuse_propagate_attributes is not None:
                 try:
-                    with _langfuse_propagate_attributes(user_id=user_id, session_id=session_id):
-                        return func(*f_args, **f_kwargs)
+                    propagated_attributes = _langfuse_propagate_attributes(user_id=user_id, session_id=session_id)
                 except Exception:
-                    pass
+                    propagated_attributes = None
+                if propagated_attributes is not None:
+                    with propagated_attributes:
+                        return func(*f_args, **f_kwargs)
 
             if _langfuse_context is not None:
                 try:

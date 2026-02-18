@@ -196,3 +196,53 @@ def test_traceable_prefers_langfuse_propagate_attributes(monkeypatch: Any) -> No
     wrapped = decorator(sample)
     assert wrapped() == "ok"
     assert updates == [{"user_id": "user-123", "session_id": "session-123"}]
+
+
+def test_traceable_does_not_swallow_wrapped_function_exceptions_with_propagation(monkeypatch: Any) -> None:
+    class ExpectedError(RuntimeError):
+        pass
+
+    class _FakeContextManager:
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+            return None
+
+    def fake_propagate_attributes(**kwargs: Any) -> _FakeContextManager:
+        return _FakeContextManager()
+
+    def fake_langfuse_observe(*args: Any, **kwargs: Any):
+        def _decorator(func: Any) -> Any:
+            def _wrapped(*f_args: Any, **f_kwargs: Any) -> Any:
+                return func(*f_args, **f_kwargs)
+
+            return _wrapped
+
+        return _decorator
+
+    calls = {"count": 0}
+
+    monkeypatch.setattr(tracing, "_langfuse_propagate_attributes", fake_propagate_attributes)
+    monkeypatch.setattr(tracing, "_langfuse_context", None)
+    monkeypatch.setattr(tracing, "_langfuse_observe", fake_langfuse_observe)
+    monkeypatch.setenv("ENABLE_LANGFUSE_TRACING", "true")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "lf-pk")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "lf-sk")
+    monkeypatch.setenv("LANGFUSE_USER_ID", "user-123")
+    monkeypatch.setenv("LANGFUSE_SESSION_ID", "session-123")
+
+    decorator = tracing.traceable(name="abc", run_type="chain")
+
+    def sample() -> str:
+        calls["count"] += 1
+        raise ExpectedError("boom")
+
+    wrapped = decorator(sample)
+    try:
+        wrapped()
+        raise AssertionError("ExpectedError was not raised")
+    except ExpectedError:
+        pass
+
+    assert calls["count"] == 1
