@@ -8,6 +8,7 @@ from pathlib import Path
 
 from uk_resell_adk.config import DEFAULT_CONFIG
 from uk_resell_adk.html_renderer import write_html_report
+from uk_resell_adk.models import CandidateItem, ProfitabilityAssessment
 from uk_resell_adk.tools import (
     assess_profitability_against_ebay,
     configure_source_runtime,
@@ -19,21 +20,58 @@ from uk_resell_adk.tools import (
 from uk_resell_adk.tracing import configure_tracing, traceable
 
 
+def _select_top_profitable_assessments(
+    assessments: list[ProfitabilityAssessment], *, limit: int
+) -> list[ProfitabilityAssessment]:
+    if limit <= 0:
+        return []
+    return sorted(
+        assessments,
+        key=lambda a: (a.estimated_profit_gbp, a.estimated_margin_percent),
+        reverse=True,
+    )[:limit]
+
+
+def _select_report_candidates(
+    candidates: list[CandidateItem], shortlisted_assessments: list[ProfitabilityAssessment]
+) -> list[CandidateItem]:
+    if not shortlisted_assessments:
+        return []
+    candidate_by_url = {item.url: item for item in candidates}
+    ordered: list[CandidateItem] = []
+    seen_urls: set[str] = set()
+    for assessment in shortlisted_assessments:
+        if assessment.item_url in seen_urls:
+            continue
+        candidate = candidate_by_url.get(assessment.item_url)
+        if candidate is None:
+            continue
+        seen_urls.add(assessment.item_url)
+        ordered.append(candidate)
+    return ordered
+
+
 @traceable(name="run_local_dry_run", run_type="chain")
 def run_local_dry_run() -> dict:
-    """Run the end-to-end sourcing pipeline without ADK runtime orchestration."""
+    """Run the end-to-end workflow: deep sourcing, full analysis, focused report shortlist."""
     reset_source_diagnostics()
     marketplaces = discover_foreign_marketplaces()[: DEFAULT_CONFIG.max_foreign_sites]
 
-    candidates = []
+    candidates: list[CandidateItem] = []
     for market in marketplaces:
-        candidates.extend(find_candidate_items(market)[: DEFAULT_CONFIG.max_items_per_source])
+        candidates.extend(find_candidate_items(market))
 
-    assessments = [assess_profitability_against_ebay(item) for item in candidates]
+    all_assessments = [assess_profitability_against_ebay(item) for item in candidates]
+    shortlisted_assessments = _select_top_profitable_assessments(
+        all_assessments, limit=DEFAULT_CONFIG.max_items_per_source
+    )
+    report_candidates = _select_report_candidates(candidates, shortlisted_assessments)
     return {
         "marketplaces": [m.to_dict() for m in marketplaces],
-        "candidate_items": [c.to_dict() for c in candidates],
-        "assessments": [a.to_dict() for a in assessments],
+        "candidate_items": [c.to_dict() for c in report_candidates],
+        "assessments": [a.to_dict() for a in shortlisted_assessments],
+        "analyzed_candidate_count": len(candidates),
+        "analyzed_assessment_count": len(all_assessments),
         "source_diagnostics": get_source_diagnostics(),
     }
 
