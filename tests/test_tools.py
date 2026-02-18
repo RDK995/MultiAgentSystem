@@ -60,6 +60,36 @@ def test_find_candidate_items_for_known_marketplace_uses_adapter(monkeypatch: An
     assert all(i.site_name == "Nin-Nin-Game" for i in items)
 
 
+def test_find_candidate_items_requests_deeper_source_research(monkeypatch: Any) -> None:
+    marketplace = MarketplaceSite(
+        name="Nin-Nin-Game",
+        country="Japan",
+        url="https://www.nin-nin-game.com/en/",
+        reason="catalog",
+    )
+    seen: dict[str, int] = {"limit": 0}
+
+    class _FakeAdapter:
+        last_fetch_meta = {"blocked": 0, "fetch_errors": 0, "parse_misses": 0, "live_items": 0, "fallback_items": 0}
+
+        def fetch_candidates(
+            self,
+            limit: int,
+            timeout_seconds: float = 10,
+            retries: int = 2,
+            allow_fallback: bool = False,
+        ) -> list[CandidateItem]:
+            seen["limit"] = limit
+            return []
+
+    monkeypatch.delenv("SOURCE_RESEARCH_DEPTH_MULTIPLIER", raising=False)
+    monkeypatch.setattr(tools, "_get_adapter_for_marketplace", lambda _m: _FakeAdapter())
+
+    tools.find_candidate_items(marketplace)
+
+    assert seen["limit"] == tools.DEFAULT_SOURCE_ITEM_LIMIT * tools.DEFAULT_SOURCE_RESEARCH_DEPTH_MULTIPLIER
+
+
 def test_find_candidate_items_for_unknown_marketplace_returns_empty() -> None:
     unknown = MarketplaceSite(
         name="Other Site",
@@ -69,6 +99,17 @@ def test_find_candidate_items_for_unknown_marketplace_returns_empty() -> None:
     )
 
     assert tools.find_candidate_items(unknown) == []
+
+
+def test_source_fetch_limit_uses_env_and_clamps(monkeypatch: Any) -> None:
+    monkeypatch.setenv("SOURCE_RESEARCH_DEPTH_MULTIPLIER", "5")
+    assert tools._source_fetch_limit() == tools.DEFAULT_SOURCE_ITEM_LIMIT * 5
+
+    monkeypatch.setenv("SOURCE_RESEARCH_DEPTH_MULTIPLIER", "999")
+    assert tools._source_fetch_limit() == tools.DEFAULT_SOURCE_ITEM_LIMIT * 10
+
+    monkeypatch.setenv("SOURCE_RESEARCH_DEPTH_MULTIPLIER", "invalid")
+    assert tools._source_fetch_limit() == tools.DEFAULT_SOURCE_ITEM_LIMIT * tools.DEFAULT_SOURCE_RESEARCH_DEPTH_MULTIPLIER
 
 
 def test_find_candidate_items_marks_fetch_error_status(monkeypatch: Any) -> None:

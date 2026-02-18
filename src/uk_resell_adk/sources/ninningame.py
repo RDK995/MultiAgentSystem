@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import random
+import time
 from urllib.parse import quote_plus
 
 from uk_resell_adk.models import CandidateItem
@@ -81,9 +83,12 @@ class NinNinGameAdapter(SourceAdapter):
         seen: set[str] = set()
         fetched_at = now_utc_iso()
         meta = new_fetch_meta()
+        rng = random.Random(time.time_ns())
+        queries = list(self._queries)
+        rng.shuffle(queries)
 
         # Pass 1: card-specific search pages.
-        for query in self._queries:
+        for query in queries:
             search_url = self._search_url(query)
             try:
                 content = fetch_page(
@@ -132,6 +137,7 @@ class NinNinGameAdapter(SourceAdapter):
                 retries=retries,
                 source_key=self.descriptor.key,
             )
+            rng.shuffle(sitemap_urls)
             for url in sitemap_urls:
                 if url in seen:
                     continue

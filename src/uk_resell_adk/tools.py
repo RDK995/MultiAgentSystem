@@ -9,7 +9,10 @@ Design goals:
 """
 
 from dataclasses import dataclass
+import hashlib
 import logging
+import os
+import random
 from statistics import median
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -30,6 +33,7 @@ LOGGER = logging.getLogger(__name__)
 EBAY_FINAL_VALUE_FEE_RATE = 0.0
 EBAY_PER_ORDER_FEE_GBP = 0.0
 DEFAULT_SOURCE_ITEM_LIMIT = 12
+DEFAULT_SOURCE_RESEARCH_DEPTH_MULTIPLIER = 3
 
 
 @dataclass
@@ -71,6 +75,24 @@ def _dedupe_items_by_url(items: list[CandidateItem]) -> list[CandidateItem]:
         seen_urls.add(key)
         deduped.append(item)
     return deduped
+
+
+def _source_fetch_limit() -> int:
+    raw = os.getenv("SOURCE_RESEARCH_DEPTH_MULTIPLIER", str(DEFAULT_SOURCE_RESEARCH_DEPTH_MULTIPLIER)).strip()
+    try:
+        multiplier = int(raw)
+    except ValueError:
+        multiplier = DEFAULT_SOURCE_RESEARCH_DEPTH_MULTIPLIER
+    multiplier = max(1, min(multiplier, 10))
+    return DEFAULT_SOURCE_ITEM_LIMIT * multiplier
+
+
+def _build_run_rng(scope: str) -> random.Random:
+    seed_override = os.getenv("SOURCE_RANDOM_SEED")
+    if seed_override:
+        digest = hashlib.sha256(f"{seed_override}:{scope}".encode("utf-8")).hexdigest()[:16]
+        return random.Random(int(digest, 16))
+    return random.SystemRandom()
 
 
 def _resolve_source_status(*, live_count: int, fallback_count: int, blocked_count: int, parse_miss_count: int, error_count: int) -> str:
@@ -160,7 +182,7 @@ def find_candidate_items(marketplace: MarketplaceSite) -> list[CandidateItem]:
     try:
         raw_items = list(
             adapter.fetch_candidates(
-                limit=DEFAULT_SOURCE_ITEM_LIMIT,
+                limit=_source_fetch_limit(),
                 allow_fallback=SOURCE_RUNTIME.allow_fallback,
             )
         )
@@ -178,6 +200,7 @@ def find_candidate_items(marketplace: MarketplaceSite) -> list[CandidateItem]:
         return []
 
     deduped = _dedupe_items_by_url(raw_items)
+    _build_run_rng(marketplace.name).shuffle(deduped)
     live_count = sum(1 for x in deduped if x.data_origin == "live")
     fallback_count = sum(1 for x in deduped if x.data_origin == "fallback")
 

@@ -27,7 +27,7 @@ def build_multi_agent_system(config: RuntimeConfig) -> SequentialAgent:
         instruction=(
             "Focus on Japanese trading card sources that ship to the UK: "
             "HobbyLink Japan and Nin-Nin-Game. "
-            "Call find_candidate_items for each source and return product-specific candidates "
+            "Call find_candidate_items for each source and gather a broad candidate pool "
             "for trading cards only (booster boxes, decks, singles where available), "
             "with landed-cost assumptions suitable for UK resale validation."
         ),
@@ -39,8 +39,8 @@ def build_multi_agent_system(config: RuntimeConfig) -> SequentialAgent:
         name="profitability_agent",
         model=config.model_name,
         instruction=(
-            "Cross-reference each candidate item against eBay UK sold-price signals using the tool. "
-            "Output structured profitability assessments and confidence levels."
+            "Cross-reference every candidate item against eBay UK sold-price signals using the tool. "
+            "Evaluate the full sourced pool and output structured profitability assessments and confidence levels."
         ),
         tools=[FunctionTool(assess_profitability_against_ebay)],
         output_key="assessments",
@@ -50,7 +50,8 @@ def build_multi_agent_system(config: RuntimeConfig) -> SequentialAgent:
         name="report_writer_agent",
         model=config.model_name,
         instruction=(
-            "Create a data lead report with executive summary, high/medium/low-confidence leads, "
+            "Create a data lead report focused on the most profitable opportunities from the full assessed pool. "
+            "Include executive summary, high/medium/low-confidence leads, "
             "risk factors, and concrete recommendations for next sourcing actions."
         ),
         output_key="lead_report",

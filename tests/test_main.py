@@ -61,6 +61,7 @@ def test_run_local_dry_run_respects_config_limits(monkeypatch: Any) -> None:
     try:
         main.DEFAULT_CONFIG.max_foreign_sites = 1
         main.DEFAULT_CONFIG.max_items_per_source = 2
+        assessed_titles: list[str] = []
 
         monkeypatch.setattr(
             main,
@@ -84,15 +85,18 @@ def test_run_local_dry_run_respects_config_limits(monkeypatch: Any) -> None:
         monkeypatch.setattr(
             main,
             "assess_profitability_against_ebay",
-            lambda item: ProfitabilityAssessment(
-                item_title=item.title,
-                item_url=item.url,
-                total_landed_cost_gbp=2.0,
-                ebay_median_sale_price_gbp=3.0,
-                estimated_fees_gbp=0.4,
-                estimated_profit_gbp=0.6,
-                estimated_margin_percent=30.0,
-                confidence="medium",
+            lambda item: (
+                assessed_titles.append(item.title)
+                or ProfitabilityAssessment(
+                    item_title=item.title,
+                    item_url=item.url,
+                    total_landed_cost_gbp=2.0,
+                    ebay_median_sale_price_gbp=3.0,
+                    estimated_fees_gbp=0.4,
+                    estimated_profit_gbp={"A": 0.4, "B": 1.2, "C": 0.8}[item.title],
+                    estimated_margin_percent=30.0,
+                    confidence="medium",
+                )
             ),
         )
 
@@ -101,6 +105,11 @@ def test_run_local_dry_run_respects_config_limits(monkeypatch: Any) -> None:
         assert len(result["marketplaces"]) == 1
         assert len(result["candidate_items"]) == 2
         assert len(result["assessments"]) == 2
+        assert len(assessed_titles) == 3
+        assert assessed_titles == ["A", "B", "C"]
+        assert [a["item_title"] for a in result["assessments"]] == ["B", "C"]
+        assert result["analyzed_candidate_count"] == 3
+        assert result["analyzed_assessment_count"] == 3
     finally:
         main.DEFAULT_CONFIG.max_foreign_sites = original_sites
         main.DEFAULT_CONFIG.max_items_per_source = original_items
