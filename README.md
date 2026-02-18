@@ -52,14 +52,20 @@ python -m uk_resell_adk.main --json
 
 By default, reports are written to unique files like `reports/uk_resell_report_20260217_204113.html`.
 
-## LangSmith Tracing
+## Tracing (LangSmith + Langfuse)
 
-Tracing is optional. Enable with:
+Tracing is optional and can run to both providers concurrently.
 
 ```bash
-export LANGSMITH_API_KEY="your-api-key"
-export LANGSMITH_TRACING="true"          # optional; auto-enabled when key is present
+export ENABLE_LANGSMITH_TRACING="true"   # optional, defaults true
+export ENABLE_LANGFUSE_TRACING="true"    # optional, defaults true
+
+export LANGSMITH_API_KEY="your-langsmith-api-key"
 export LANGSMITH_PROJECT="uk-resell-adk" # optional
+
+export LANGFUSE_PUBLIC_KEY="your-langfuse-public-key"
+export LANGFUSE_SECRET_KEY="your-langfuse-secret-key"
+export LANGFUSE_BASE_URL="https://cloud.langfuse.com" # optional
 ```
 
 Traced spans include:
