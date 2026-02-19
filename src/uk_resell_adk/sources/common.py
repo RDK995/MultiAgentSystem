@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
+import hashlib
 import json
 import logging
+import os
 from pathlib import Path
+import random
 import re
 import time
 from html import unescape
+from typing import TypeVar
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
@@ -15,16 +20,94 @@ LOGGER = logging.getLogger(__name__)
 DEBUG_ENABLED = False
 DEBUG_DIR = Path("debug/sources")
 
-_CURRENCY_TO_GBP: dict[str, float] = {
+_DEFAULT_CURRENCY_TO_GBP: dict[str, float] = {
     "GBP": 1.0,
     "EUR": 0.86,
     "USD": 0.79,
     "JPY": 0.0053,
 }
+_CURRENCY_TO_GBP: dict[str, float] = dict(_DEFAULT_CURRENCY_TO_GBP)
+_FX_LAST_REFRESH_TS = 0.0
+T = TypeVar("T")
 
 
 class SourceBlockedError(RuntimeError):
     pass
+
+
+def _env_truthy(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def refresh_currency_rates(force: bool = False) -> bool:
+    """Refresh currency-to-GBP rates from a public FX API.
+
+    Returns True when rates were refreshed in this call.
+    """
+    global _FX_LAST_REFRESH_TS
+    if not _env_truthy("ENABLE_LIVE_FX_RATES", True):
+        return False
+
+    now_ts = time.time()
+    ttl_raw = os.getenv("FX_REFRESH_SECONDS", "21600").strip()
+    try:
+        ttl_seconds = max(300, int(ttl_raw))
+    except ValueError:
+        ttl_seconds = 21600
+    if not force and _FX_LAST_REFRESH_TS and (now_ts - _FX_LAST_REFRESH_TS) < ttl_seconds:
+        return False
+
+    endpoint = os.getenv("FX_API_URL", "https://api.frankfurter.dev/v1/latest").strip()
+    symbols = [k for k in sorted(_DEFAULT_CURRENCY_TO_GBP.keys()) if k != "GBP"]
+    query = f"{endpoint}?base=GBP&symbols={','.join(symbols)}"
+    request = Request(query, headers={"User-Agent": USER_AGENT})
+
+    try:
+        with urlopen(request, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="ignore"))
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("FX refresh failed, keeping fallback currency rates: %s", exc)
+        return False
+
+    rates = payload.get("rates", {}) if isinstance(payload, dict) else {}
+    if not isinstance(rates, dict):
+        return False
+
+    updated: dict[str, float] = {"GBP": 1.0}
+    for symbol in symbols:
+        raw = rates.get(symbol)
+        if raw is None:
+            updated[symbol] = _CURRENCY_TO_GBP.get(symbol, _DEFAULT_CURRENCY_TO_GBP[symbol])
+            continue
+        try:
+            as_float = float(raw)
+            if as_float <= 0:
+                raise ValueError("non-positive FX rate")
+            # API returns target-per-GBP; convert to currency-to-GBP.
+            updated[symbol] = 1.0 / as_float
+        except Exception:  # noqa: BLE001
+            updated[symbol] = _CURRENCY_TO_GBP.get(symbol, _DEFAULT_CURRENCY_TO_GBP[symbol])
+
+    _CURRENCY_TO_GBP.update(updated)
+    _FX_LAST_REFRESH_TS = now_ts
+    return True
+
+
+def shuffle_for_source(items: Sequence[T], *, source_key: str, purpose: str) -> list[T]:
+    shuffled = list(items)
+    if len(shuffled) < 2:
+        return shuffled
+    seed = os.getenv("SOURCE_RANDOM_SEED", "").strip()
+    if seed:
+        digest = hashlib.sha256(f"{seed}:{source_key}:{purpose}".encode("utf-8")).hexdigest()[:16]
+        rng: random.Random = random.Random(int(digest, 16))
+    else:
+        rng = random.SystemRandom()
+    rng.shuffle(shuffled)
+    return shuffled
 
 
 def configure_debug(enabled: bool, output_dir: str | Path) -> None:
@@ -107,6 +190,19 @@ def currency_to_gbp(amount: float, currency: str | None) -> float:
     return amount if rate is None else amount * rate
 
 
+def infer_currency_from_price_text(raw_price: str) -> str | None:
+    low = raw_price.lower()
+    if "$" in raw_price or "usd" in low:
+        return "USD"
+    if "£" in raw_price or "gbp" in low:
+        return "GBP"
+    if "€" in raw_price or "eur" in low:
+        return "EUR"
+    if "¥" in raw_price or "円" in raw_price or "jpy" in low:
+        return "JPY"
+    return None
+
+
 def estimate_shipping_to_uk_gbp(source_price_gbp: float) -> float:
     return round(max(12.0, min(35.0, 12.0 + (source_price_gbp * 0.08))), 2)
 
@@ -139,13 +235,15 @@ def extract_products_from_json_ld(content: str) -> list[dict[str, str | float]]:
                 price = offers.get("price")
                 currency = offers.get("priceCurrency")
             if isinstance(name, str) and isinstance(url, str):
-                amount = extract_number(str(price)) if price is not None else None
+                price_text = str(price) if price is not None else ""
+                amount = extract_number(price_text) if price is not None else None
                 if amount is not None:
+                    resolved_currency = str(currency) if currency else infer_currency_from_price_text(price_text)
                     products.append(
                         {
                             "title": normalize_text(name),
                             "url": url,
-                            "source_price_gbp": round(currency_to_gbp(amount, str(currency) if currency else None), 2),
+                            "source_price_gbp": round(currency_to_gbp(amount, resolved_currency), 2),
                         }
                     )
         for value in obj.values():
@@ -161,6 +259,10 @@ def extract_products_from_json_ld(content: str) -> list[dict[str, str | float]]:
 
 
 def extract_products_from_html(content: str, base_url: str) -> list[dict[str, str | float]]:
+    price_pattern = re.compile(
+        r"(£|€|\$|¥|円|&yen;|JPY|USD|EUR)\s*([\d,]+(?:\.\d{1,2})?)|([\d,]+(?:\.\d{1,2})?)\s*(円|JPY|USD|EUR)",
+        flags=re.IGNORECASE,
+    )
     candidates: list[dict[str, str | float]] = []
     for match in re.finditer(
         r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
@@ -172,13 +274,40 @@ def extract_products_from_html(content: str, base_url: str) -> list[dict[str, st
         if len(title) < 8:
             continue
         url = urljoin(base_url, unescape(href))
-        window = content[match.end() : match.end() + 450]
-        price_match = re.search(r"(£|€|\$|¥|&yen;|JPY|USD|EUR)\s*([\d,]+(?:\.\d{1,2})?)", window, flags=re.IGNORECASE)
+        # Choose the closest price token around this link to avoid bleeding
+        # price values across adjacent product cards.
+        window_start = max(0, match.start() - 450)
+        window_end = min(len(content), match.end() + 1400)
+        window = content[window_start:window_end]
+        price_candidates = list(price_pattern.finditer(window))
+        if not price_candidates:
+            continue
+
+        link_start = match.start()
+        link_end = match.end()
+
+        def _distance(candidate: re.Match[str]) -> tuple[int, int]:
+            abs_start = window_start + candidate.start()
+            abs_end = window_start + candidate.end()
+            if abs_start >= link_end:
+                # Price appears after link.
+                return (abs_start - link_end, 1)
+            if abs_end <= link_start:
+                # Price appears before link; prefer before-link on equal distance.
+                return (link_start - abs_end, 0)
+            return (0, 1)
+
+        price_match = min(price_candidates, key=_distance)
         if not price_match:
             continue
-        symbol = price_match.group(1).upper()
-        currency = {"£": "GBP", "€": "EUR", "$": "USD", "¥": "JPY", "&YEN;": "JPY"}.get(symbol, symbol)
-        amount = extract_number(price_match.group(2))
+        if price_match.group(1) and price_match.group(2):
+            symbol = price_match.group(1).upper()
+            amount_raw = price_match.group(2)
+        else:
+            symbol = str(price_match.group(4) or "").upper()
+            amount_raw = str(price_match.group(3) or "")
+        currency = {"£": "GBP", "€": "EUR", "$": "USD", "¥": "JPY", "円": "JPY", "&YEN;": "JPY"}.get(symbol, symbol)
+        amount = extract_number(amount_raw)
         if amount is None:
             continue
         price_gbp = round(currency_to_gbp(amount, currency), 2)

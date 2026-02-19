@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 import json
-import random
 import re
-import time
 from urllib.parse import quote_plus
 
 from uk_resell_adk.models import CandidateItem
@@ -16,6 +14,7 @@ from uk_resell_adk.sources.common import (
     extract_products_from_json_ld,
     fetch_page,
     fetch_sitemap_product_urls,
+    shuffle_for_source,
 )
 from uk_resell_adk.sources.trading_cards import (
     append_candidate_from_row,
@@ -173,9 +172,7 @@ class HLJAdapter(SourceAdapter):
         seen: set[str] = set()
         fetched_at = now_utc_iso()
         meta = new_fetch_meta()
-        rng = random.Random(time.time_ns())
-        queries = list(self._queries)
-        rng.shuffle(queries)
+        queries = shuffle_for_source(self._queries, source_key=self.descriptor.key, purpose="queries")
 
         # Pass 1: search pages + live-price API.
         for query in queries:
@@ -246,7 +243,7 @@ class HLJAdapter(SourceAdapter):
                 retries=retries,
                 source_key=self.descriptor.key,
             )
-            rng.shuffle(sitemap_urls)
+            sitemap_urls = shuffle_for_source(sitemap_urls, source_key=self.descriptor.key, purpose="sitemap")
             for url in sitemap_urls:
                 if url in seen:
                     continue

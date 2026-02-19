@@ -160,3 +160,16 @@ def test_main_uses_unique_default_html_output_path(monkeypatch: Any, capsys: Any
     captured = capsys.readouterr()
     assert str(out) in captured.err
     assert out.exists()
+
+
+def test_select_top_profitable_assessments_orders_by_profit_then_margin() -> None:
+    from uk_resell_adk.models import ProfitabilityAssessment
+
+    assessments = [
+        ProfitabilityAssessment("A", "https://x/a", 1, 2, 0, 12.0, 5.0, "high"),
+        ProfitabilityAssessment("B", "https://x/b", 1, 2, 0, 12.0, 9.0, "high"),
+        ProfitabilityAssessment("C", "https://x/c", 1, 2, 0, 10.0, 20.0, "high"),
+    ]
+
+    selected = main._select_top_profitable_assessments(assessments, limit=2)
+    assert [x.item_title for x in selected] == ["B", "A"]

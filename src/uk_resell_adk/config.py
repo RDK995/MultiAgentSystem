@@ -15,7 +15,7 @@ class RuntimeConfig:
     ebay_region: str = "GB"
     request_timeout_seconds: float = 10.0
     max_retries: int = 2
-    enabled_sources: tuple[str, ...] = ("hlj", "ninningame")
+    enabled_sources: tuple[str, ...] = ("hlj", "ninningame", "surugaya")
 
 
 DEFAULT_CONFIG = RuntimeConfig()

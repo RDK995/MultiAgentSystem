@@ -17,10 +17,11 @@ from statistics import median
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from uk_resell_adk.config import DEFAULT_CONFIG
 from uk_resell_adk.models import CandidateItem, MarketplaceSite, ProfitabilityAssessment
-from uk_resell_adk.sources import HLJAdapter, NinNinGameAdapter
+from uk_resell_adk.sources import HLJAdapter, NinNinGameAdapter, SurugaYaAdapter
 from uk_resell_adk.sources.base import SourceAdapter
-from uk_resell_adk.sources.common import configure_debug
+from uk_resell_adk.sources.common import configure_debug, refresh_currency_rates
 from uk_resell_adk.tracing import traceable
 
 
@@ -31,7 +32,8 @@ LOGGER = logging.getLogger(__name__)
 # "No transaction or final value fees" for UK-based private sellers.
 # Source: https://www.ebay.co.uk/help/fees-credits-invoices/selling-fees/fees-private-sellers?id=4822
 EBAY_FINAL_VALUE_FEE_RATE = 0.0
-EBAY_PER_ORDER_FEE_GBP = 0.0
+# Assume a fixed domestic post-sale shipping cost within the UK.
+EBAY_PER_ORDER_FEE_GBP = 3.95
 DEFAULT_SOURCE_ITEM_LIMIT = 12
 DEFAULT_SOURCE_RESEARCH_DEPTH_MULTIPLIER = 3
 
@@ -52,13 +54,31 @@ LAST_SOURCE_DIAGNOSTICS: dict[str, dict] = {}
 SOURCE_ADAPTERS: tuple[SourceAdapter, ...] = (
     HLJAdapter(),
     NinNinGameAdapter(),
+    SurugaYaAdapter(),
 )
+
+
+def _enabled_source_keys() -> set[str]:
+    raw = os.getenv("ENABLED_SOURCES")
+    if raw is None or not raw.strip():
+        return {key.strip().lower() for key in DEFAULT_CONFIG.enabled_sources}
+
+    keys = {part.strip().lower() for part in raw.split(",") if part.strip()}
+    if keys:
+        return keys
+    return {key.strip().lower() for key in DEFAULT_CONFIG.enabled_sources}
+
+
+def _enabled_source_adapters() -> tuple[SourceAdapter, ...]:
+    allowed = _enabled_source_keys()
+    enabled = tuple(adapter for adapter in SOURCE_ADAPTERS if adapter.descriptor.key.lower() in allowed)
+    return enabled or SOURCE_ADAPTERS
 
 
 def _get_adapter_for_marketplace(marketplace: MarketplaceSite) -> SourceAdapter | None:
     """Resolve a source adapter by marketplace display name."""
     name = marketplace.name.strip().lower()
-    for adapter in SOURCE_ADAPTERS:
+    for adapter in _enabled_source_adapters():
         if adapter.descriptor.name.lower() == name:
             return adapter
     return None
@@ -123,6 +143,9 @@ def _record_source_diagnostics(
     blocked_count: int,
     parse_miss_count: int,
     error_count: int,
+    blocked_examples: list[str] | None = None,
+    parse_miss_examples: list[str] | None = None,
+    fetch_error_examples: list[str] | None = None,
 ) -> None:
     LAST_SOURCE_DIAGNOSTICS[source_name] = {
         "source_name": source_name,
@@ -132,6 +155,9 @@ def _record_source_diagnostics(
         "blocked_count": blocked_count,
         "parse_miss_count": parse_miss_count,
         "error_count": error_count,
+        "blocked_examples": blocked_examples or [],
+        "parse_miss_examples": parse_miss_examples or [],
+        "fetch_error_examples": fetch_error_examples or [],
     }
 
 
@@ -143,6 +169,7 @@ def configure_source_runtime(
     debug_dir: str = "debug/sources",
 ) -> None:
     """Apply runtime options for source adapters and shared debug capture."""
+    refresh_currency_rates()
     SOURCE_RUNTIME.allow_fallback = allow_fallback
     SOURCE_RUNTIME.strict_live = strict_live
     SOURCE_RUNTIME.debug_sources = debug_sources
@@ -168,7 +195,7 @@ def discover_foreign_marketplaces() -> list[MarketplaceSite]:
             url=adapter.descriptor.home_url,
             reason=adapter.descriptor.reason,
         )
-        for adapter in SOURCE_ADAPTERS
+        for adapter in _enabled_source_adapters()
     ]
 
 
@@ -224,6 +251,9 @@ def find_candidate_items(marketplace: MarketplaceSite) -> list[CandidateItem]:
         blocked_count=blocked_count,
         parse_miss_count=parse_miss_count,
         error_count=error_count,
+        blocked_examples=list(meta.get("blocked_examples", []))[:5],
+        parse_miss_examples=list(meta.get("parse_miss_examples", []))[:5],
+        fetch_error_examples=list(meta.get("fetch_error_examples", []))[:5],
     )
 
     if SOURCE_RUNTIME.strict_live and adapter.descriptor.strict_live_required and live_count == 0:
@@ -232,7 +262,18 @@ def find_candidate_items(marketplace: MarketplaceSite) -> list[CandidateItem]:
         )
 
     if not deduped:
-        LOGGER.warning("No candidates found for source: %s (status=%s)", marketplace.name, status)
+        blocked_examples = list(meta.get("blocked_examples", []))[:3]
+        parse_miss_examples = list(meta.get("parse_miss_examples", []))[:3]
+        fetch_error_examples = list(meta.get("fetch_error_examples", []))[:3]
+        detail_parts: list[str] = []
+        if parse_miss_examples:
+            detail_parts.append(f"parse_miss_examples={parse_miss_examples}")
+        if fetch_error_examples:
+            detail_parts.append(f"fetch_error_examples={fetch_error_examples}")
+        if blocked_examples:
+            detail_parts.append(f"blocked_examples={blocked_examples}")
+        detail_suffix = f" | {'; '.join(detail_parts)}" if detail_parts else ""
+        LOGGER.warning("No candidates found for source: %s (status=%s)%s", marketplace.name, status, detail_suffix)
 
     return deduped
 
