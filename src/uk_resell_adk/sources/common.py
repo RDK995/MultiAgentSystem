@@ -259,6 +259,10 @@ def extract_products_from_json_ld(content: str) -> list[dict[str, str | float]]:
 
 
 def extract_products_from_html(content: str, base_url: str) -> list[dict[str, str | float]]:
+    price_pattern = re.compile(
+        r"(£|€|\$|¥|円|&yen;|JPY|USD|EUR)\s*([\d,]+(?:\.\d{1,2})?)|([\d,]+(?:\.\d{1,2})?)\s*(円|JPY|USD|EUR)",
+        flags=re.IGNORECASE,
+    )
     candidates: list[dict[str, str | float]] = []
     for match in re.finditer(
         r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
@@ -270,15 +274,30 @@ def extract_products_from_html(content: str, base_url: str) -> list[dict[str, st
         if len(title) < 8:
             continue
         url = urljoin(base_url, unescape(href))
-        # Some marketplaces place the price before the link or farther away in the card block.
-        start = max(0, match.start() - 450)
-        end = min(len(content), match.end() + 1400)
-        window = content[start:end]
-        price_match = re.search(
-            r"(£|€|\$|¥|円|&yen;|JPY|USD|EUR)\s*([\d,]+(?:\.\d{1,2})?)|([\d,]+(?:\.\d{1,2})?)\s*(円|JPY|USD|EUR)",
-            window,
-            flags=re.IGNORECASE,
-        )
+        # Choose the closest price token around this link to avoid bleeding
+        # price values across adjacent product cards.
+        window_start = max(0, match.start() - 450)
+        window_end = min(len(content), match.end() + 1400)
+        window = content[window_start:window_end]
+        price_candidates = list(price_pattern.finditer(window))
+        if not price_candidates:
+            continue
+
+        link_start = match.start()
+        link_end = match.end()
+
+        def _distance(candidate: re.Match[str]) -> tuple[int, int]:
+            abs_start = window_start + candidate.start()
+            abs_end = window_start + candidate.end()
+            if abs_start >= link_end:
+                # Price appears after link.
+                return (abs_start - link_end, 1)
+            if abs_end <= link_start:
+                # Price appears before link; prefer before-link on equal distance.
+                return (link_start - abs_end, 0)
+            return (0, 1)
+
+        price_match = min(price_candidates, key=_distance)
         if not price_match:
             continue
         if price_match.group(1) and price_match.group(2):

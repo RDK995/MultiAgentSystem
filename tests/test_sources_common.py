@@ -50,6 +50,24 @@ def test_extract_products_from_html_parses_price_before_link_in_same_card() -> N
     assert float(rows[0]["source_price_gbp"]) > 0
 
 
+def test_extract_products_from_html_uses_nearest_pre_link_price_per_card() -> None:
+    html = """
+    <div class="card">
+      <span class="price">JPY 5,200</span>
+      <a href="/en/product/first">First Item Example</a>
+    </div>
+    <div class="card">
+      <span class="price">JPY 9,800</span>
+      <a href="/en/product/second">Second Item Example</a>
+    </div>
+    """
+    rows = extract_products_from_html(html, "https://example.com")
+    assert len(rows) >= 2
+    by_url = {str(row["url"]): float(row["source_price_gbp"]) for row in rows}
+    assert by_url["https://example.com/en/product/first"] == round(5200 * 0.0053, 2)
+    assert by_url["https://example.com/en/product/second"] == round(9800 * 0.0053, 2)
+
+
 def test_extract_products_from_json_ld_inferrs_usd_when_currency_missing() -> None:
     html = """
     <script type="application/ld+json">
