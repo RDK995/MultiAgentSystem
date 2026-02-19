@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import re
 from urllib.parse import quote_plus
 
 from uk_resell_adk.models import CandidateItem
@@ -14,62 +15,39 @@ from uk_resell_adk.sources.common import (
     fetch_sitemap_product_urls,
     shuffle_for_source,
 )
-from uk_resell_adk.sources.trading_cards import (
-    append_candidate_from_row,
-    is_trading_card_item,
-    new_fetch_meta,
-    now_utc_iso,
-)
+from uk_resell_adk.sources.trading_cards import append_candidate_from_row, is_trading_card_item, new_fetch_meta, now_utc_iso
 
 
-class NinNinGameAdapter(SourceAdapter):
-    """Source adapter for Nin-Nin-Game trading-card discovery."""
+class SurugaYaAdapter(SourceAdapter):
+    """Source adapter for Suruga-ya Japanese collectibles."""
 
     descriptor = SourceDescriptor(
-        key="ninningame",
-        name="Nin-Nin-Game",
+        key="surugaya",
+        name="Suruga-ya",
         country="Japan",
-        home_url="https://www.nin-nin-game.com/en/",
-        reason="Broad catalog of Japan exclusives with established UK shipping methods.",
+        home_url="https://www.suruga-ya.com/en",
+        reason="Deep catalog for Japanese trading cards and accessories, including discounted used stock.",
     )
 
-    _queries = ("pokemon card", "one piece card game", "yugioh", "digimon card")
-    _sitemap_hints = ("/en/", "/product")
-    _sitemap_excludes = ("/blog", "/news", "/content/", "/search", "/module/")
-    _extra_card_terms = ("digimon",)
+    _queries = ("pokemon card", "one piece card game", "yugioh", "dragon ball super card")
+    _sitemap_hints = ("/en/product/", "/en/detail/")
+    _sitemap_excludes = ("/news", "/special", "/guide", "/faq")
+    _extra_card_terms = ("dragon ball",)
 
     _fallback_catalog: tuple[tuple[str, str, float], ...] = (
-        (
-            "Pokemon Card Game Booster Box",
-            "https://www.nin-nin-game.com/en/search?controller=search&search_query=pokemon+card+booster+box",
-            47.0,
-        ),
-        (
-            "One Piece Card Game Booster Box",
-            "https://www.nin-nin-game.com/en/search?controller=search&search_query=one+piece+card+game+booster+box",
-            55.0,
-        ),
-        (
-            "Yu-Gi-Oh OCG Pack",
-            "https://www.nin-nin-game.com/en/search?controller=search&search_query=yugioh+ocg",
-            21.0,
-        ),
-        (
-            "Digimon Card Game Starter Deck",
-            "https://www.nin-nin-game.com/en/search?controller=search&search_query=digimon+card+starter+deck",
-            19.0,
-        ),
+        ("Pokemon Card Japanese Booster Box", "https://www.suruga-ya.com/en/products?keyword=pokemon+card+booster+box", 49.0),
+        ("Yu-Gi-Oh OCG Japanese Box", "https://www.suruga-ya.com/en/products?keyword=yugioh+ocg+box", 34.0),
     )
 
     def __init__(self) -> None:
-        self.last_fetch_meta: dict[str, int] = {}
+        self.last_fetch_meta: dict[str, object] = {}
 
     @classmethod
     def _is_trading_card_item(cls, title: str) -> bool:
         return is_trading_card_item(title, extra_terms=cls._extra_card_terms)
 
     def _search_url(self, query: str) -> str:
-        return f"https://www.nin-nin-game.com/en/search?controller=search&search_query={quote_plus(query)}"
+        return f"https://www.suruga-ya.com/en/products?keyword={quote_plus(query)}"
 
     def fetch_candidates(
         self,
@@ -82,9 +60,11 @@ class NinNinGameAdapter(SourceAdapter):
         seen: set[str] = set()
         fetched_at = now_utc_iso()
         meta = new_fetch_meta()
+        meta["parse_miss_examples"] = []
+        meta["fetch_error_examples"] = []
+        meta["blocked_examples"] = []
         queries = shuffle_for_source(self._queries, source_key=self.descriptor.key, purpose="queries")
 
-        # Pass 1: card-specific search pages.
         for query in queries:
             search_url = self._search_url(query)
             try:
@@ -97,14 +77,24 @@ class NinNinGameAdapter(SourceAdapter):
                 )
             except SourceBlockedError:
                 meta["blocked"] += 1
+                if len(meta["blocked_examples"]) < 5:
+                    meta["blocked_examples"].append(search_url)
                 continue
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 meta["fetch_errors"] += 1
+                if len(meta["fetch_error_examples"]) < 5:
+                    meta["fetch_error_examples"].append(f"{search_url} ({type(exc).__name__}: {exc})")
                 continue
 
             rows = extract_products_from_json_ld(content) or extract_products_from_html(content, search_url)
             if not rows:
                 meta["parse_misses"] += 1
+                if len(meta["parse_miss_examples"]) < 5:
+                    jsonld_count = content.lower().count("application/ld+json")
+                    detail_link_count = len(re.findall(r"/en/(?:product|detail)/", content, flags=re.IGNORECASE))
+                    meta["parse_miss_examples"].append(
+                        f"{search_url} [jsonld={jsonld_count}, detail_links={detail_link_count}]"
+                    )
             for row in rows:
                 added = append_candidate_from_row(
                     items=items,
@@ -123,13 +113,12 @@ class NinNinGameAdapter(SourceAdapter):
                     self.last_fetch_meta = meta
                     return items
 
-        # Pass 2: sitemap exploration for larger product volume.
         if len(items) < limit:
             sitemap_urls = fetch_sitemap_product_urls(
                 self.descriptor.home_url,
                 url_hints=self._sitemap_hints,
                 url_excludes=self._sitemap_excludes,
-                limit=max(limit * 12, 80),
+                limit=max(limit * 8, 60),
                 timeout_seconds=timeout_seconds,
                 retries=retries,
                 source_key=self.descriptor.key,
@@ -148,14 +137,24 @@ class NinNinGameAdapter(SourceAdapter):
                     )
                 except SourceBlockedError:
                     meta["blocked"] += 1
+                    if len(meta["blocked_examples"]) < 5:
+                        meta["blocked_examples"].append(url)
                     continue
-                except Exception:  # noqa: BLE001
+                except Exception as exc:  # noqa: BLE001
                     meta["fetch_errors"] += 1
+                    if len(meta["fetch_error_examples"]) < 5:
+                        meta["fetch_error_examples"].append(f"{url} ({type(exc).__name__}: {exc})")
                     continue
 
                 row = extract_first_product_from_page(url, page)
                 if not row:
                     meta["parse_misses"] += 1
+                    if len(meta["parse_miss_examples"]) < 5:
+                        jsonld_count = page.lower().count("application/ld+json")
+                        detail_link_count = len(re.findall(r"/en/(?:product|detail)/", page, flags=re.IGNORECASE))
+                        meta["parse_miss_examples"].append(
+                            f"{url} [jsonld={jsonld_count}, detail_links={detail_link_count}]"
+                        )
                     continue
                 added = append_candidate_from_row(
                     items=items,
@@ -174,7 +173,6 @@ class NinNinGameAdapter(SourceAdapter):
                     self.last_fetch_meta = meta
                     return items
 
-        # Pass 3: optional deterministic fallback catalog.
         if allow_fallback and len(items) < limit:
             for title, url, source_price_gbp in self._fallback_catalog:
                 added = append_candidate_from_row(

@@ -26,7 +26,7 @@ def build_multi_agent_system(config: RuntimeConfig) -> SequentialAgent:
         model=config.model_name,
         instruction=(
             "Focus on Japanese trading card sources that ship to the UK: "
-            "HobbyLink Japan and Nin-Nin-Game. "
+            "HobbyLink Japan, Nin-Nin-Game, and Suruga-ya. "
             "Call find_candidate_items for each source and gather a broad candidate pool "
             "for trading cards only (booster boxes, decks, singles where available), "
             "with landed-cost assumptions suitable for UK resale validation."

@@ -5,6 +5,7 @@ from typing import Any
 from uk_resell_adk.models import CandidateItem
 from uk_resell_adk.sources.hlj import HLJAdapter
 from uk_resell_adk.sources.ninningame import NinNinGameAdapter
+from uk_resell_adk.sources.surugaya import SurugaYaAdapter
 
 
 SAMPLE_JSON_LD = '''
@@ -25,9 +26,9 @@ SAMPLE_JSON_LD = '''
 
 
 def test_source_descriptors_are_configured() -> None:
-    adapters = [HLJAdapter(), NinNinGameAdapter()]
+    adapters = [HLJAdapter(), NinNinGameAdapter(), SurugaYaAdapter()]
     names = {a.descriptor.name for a in adapters}
-    assert names == {"HobbyLink Japan", "Nin-Nin-Game"}
+    assert names == {"HobbyLink Japan", "Nin-Nin-Game", "Suruga-ya"}
 
 
 def test_hlj_adapter_parses_candidates_from_json_ld(monkeypatch: Any) -> None:
@@ -87,3 +88,52 @@ def test_trading_card_filters_accept_card_titles() -> None:
     assert HLJAdapter._is_trading_card_item("Pokemon Card Game Booster Box")
     assert NinNinGameAdapter._is_trading_card_item("One Piece Card Game Starter Deck")
     assert not HLJAdapter._is_trading_card_item("Nendoroid Action Figure")
+
+
+def test_hlj_adapter_query_order_is_reproducible_with_source_random_seed(monkeypatch: Any) -> None:
+    adapter = HLJAdapter()
+    seen_urls: list[str] = []
+
+    def fake_fetch(url: str, *_args: Any, **_kwargs: Any) -> str:
+        if "search/livePrice" in url:
+            return "{}"
+        if "/search/?q=" in url:
+            seen_urls.append(url)
+        return ""
+
+    monkeypatch.setenv("SOURCE_RANDOM_SEED", "seed-123")
+    monkeypatch.setattr("uk_resell_adk.sources.hlj.fetch_page", fake_fetch)
+    monkeypatch.setattr("uk_resell_adk.sources.hlj.fetch_sitemap_product_urls", lambda *args, **kwargs: [])
+
+    adapter.fetch_candidates(limit=1)
+    first_order = tuple(seen_urls)
+    seen_urls.clear()
+    adapter.fetch_candidates(limit=1)
+    second_order = tuple(seen_urls)
+
+    assert len(first_order) == len(adapter._queries)
+    assert first_order == second_order
+
+
+def test_ninningame_adapter_query_order_is_reproducible_with_source_random_seed(monkeypatch: Any) -> None:
+    adapter = NinNinGameAdapter()
+    seen_urls: list[str] = []
+
+    def fake_fetch(url: str, *_args: Any, **_kwargs: Any) -> str:
+        if "search?controller=search&search_query=" in url:
+            seen_urls.append(url)
+        return ""
+
+    monkeypatch.setenv("SOURCE_RANDOM_SEED", "seed-123")
+    monkeypatch.setattr("uk_resell_adk.sources.ninningame.fetch_page", fake_fetch)
+    monkeypatch.setattr("uk_resell_adk.sources.ninningame.fetch_sitemap_product_urls", lambda *args, **kwargs: [])
+
+    adapter.fetch_candidates(limit=1)
+    first_order = tuple(seen_urls)
+    seen_urls.clear()
+    adapter.fetch_candidates(limit=1)
+    second_order = tuple(seen_urls)
+
+    assert len(first_order) == len(adapter._queries)
+    assert first_order == second_order
+

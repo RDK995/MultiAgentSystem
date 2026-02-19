@@ -89,4 +89,5 @@ def test_item_sourcing_instruction_mentions_supported_sources(monkeypatch: Any) 
     item_agent = orchestrator.sub_agents[0]
     assert "HobbyLink Japan" in item_agent.instruction
     assert "Nin-Nin-Game" in item_agent.instruction
+    assert "Suruga-ya" in item_agent.instruction
     assert "find_candidate_items" in item_agent.instruction

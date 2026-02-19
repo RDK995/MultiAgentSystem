@@ -24,7 +24,16 @@ def test_discover_foreign_marketplaces_returns_expected_sources() -> None:
     marketplaces = tools.discover_foreign_marketplaces()
 
     names = {m.name for m in marketplaces}
-    assert names == {"HobbyLink Japan", "Nin-Nin-Game"}
+    assert names == {"HobbyLink Japan", "Nin-Nin-Game", "Suruga-ya"}
+
+
+def test_discover_foreign_marketplaces_respects_enabled_sources_env(monkeypatch: Any) -> None:
+    monkeypatch.setenv("ENABLED_SOURCES", "surugaya")
+
+    marketplaces = tools.discover_foreign_marketplaces()
+
+    names = {m.name for m in marketplaces}
+    assert names == {"Suruga-ya"}
 
 
 def test_find_candidate_items_for_known_marketplace_uses_adapter(monkeypatch: Any) -> None:
@@ -141,6 +150,47 @@ def test_find_candidate_items_marks_fetch_error_status(monkeypatch: Any) -> None
     assert tools.LAST_SOURCE_DIAGNOSTICS[marketplace.name]["status"] == "fetch_error"
 
 
+def test_find_candidate_items_surfaces_debug_examples_from_adapter_meta(monkeypatch: Any) -> None:
+    marketplace = MarketplaceSite(
+        name="Suruga-ya",
+        country="Japan",
+        url="https://www.suruga-ya.com/en",
+        reason="catalog",
+    )
+
+    class _FakeAdapter:
+        last_fetch_meta = {
+            "blocked": 1,
+            "fetch_errors": 1,
+            "parse_misses": 2,
+            "live_items": 0,
+            "fallback_items": 0,
+            "blocked_examples": ["https://example.com/blocked"],
+            "fetch_error_examples": ["https://example.com/x (TimeoutError: boom)"],
+            "parse_miss_examples": ["https://example.com/parse-miss"],
+        }
+
+        def fetch_candidates(
+            self,
+            limit: int,
+            timeout_seconds: float = 10,
+            retries: int = 2,
+            allow_fallback: bool = False,
+        ) -> list[CandidateItem]:
+            return []
+
+    monkeypatch.setattr(tools, "_get_adapter_for_marketplace", lambda _m: _FakeAdapter())
+    tools.reset_source_diagnostics()
+
+    items = tools.find_candidate_items(marketplace)
+    assert items == []
+
+    diag = tools.LAST_SOURCE_DIAGNOSTICS[marketplace.name]
+    assert diag["parse_miss_examples"] == ["https://example.com/parse-miss"]
+    assert diag["fetch_error_examples"] == ["https://example.com/x (TimeoutError: boom)"]
+    assert diag["blocked_examples"] == ["https://example.com/blocked"]
+
+
 def test_find_candidate_items_strict_live_skips_non_required_source(monkeypatch: Any) -> None:
     marketplace = MarketplaceSite(
         name="Nin-Nin-Game",
@@ -244,8 +294,8 @@ def test_assess_profitability_uses_fallback_when_no_prices(monkeypatch: Any) -> 
 
     assert assessment.ebay_median_sale_price_gbp == 135.0
     assert assessment.total_landed_cost_gbp == 120.0
-    assert assessment.estimated_fees_gbp == 0.0
-    assert assessment.estimated_profit_gbp == 15.0
+    assert assessment.estimated_fees_gbp == 3.95
+    assert assessment.estimated_profit_gbp == 11.05
     assert assessment.confidence == "low"
 
 

@@ -47,8 +47,8 @@ def _build_diagnostics_rows(source_diagnostics: list[dict]) -> str:
 def _build_assessment_rows(assessments: list[dict], origin_by_url: dict[str, str]) -> str:
     rows: list[str] = []
     for item in assessments:
-        margin = float(item["estimated_margin_percent"])
-        profit = float(item["estimated_profit_gbp"])
+        margin = float(item.get("estimated_margin_percent", 0.0))
+        profit = float(item.get("estimated_profit_gbp", 0.0))
         profit_class = "good" if profit >= 0 else "bad"
         margin_class = "good" if margin >= 0 else "bad"
         origin = origin_by_url.get(item["item_url"], "unknown")
@@ -59,12 +59,12 @@ def _build_assessment_rows(assessments: list[dict], origin_by_url: dict[str, str
             f"<td>{html.escape(item['item_title'])}</td>"
             f"<td><a href=\"{html.escape(item['item_url'])}\" target=\"_blank\">Link</a></td>"
             f"<td><span class=\"tag {origin_class}\">{origin_label}</span></td>"
-            f"<td>GBP {item['total_landed_cost_gbp']:.2f}</td>"
-            f"<td>GBP {item['ebay_median_sale_price_gbp']:.2f}</td>"
-            f"<td>GBP {item['estimated_fees_gbp']:.2f}</td>"
+            f"<td>GBP {float(item.get('total_landed_cost_gbp', 0.0)):.2f}</td>"
+            f"<td>GBP {float(item.get('ebay_median_sale_price_gbp', 0.0)):.2f}</td>"
+            f"<td>GBP {float(item.get('estimated_fees_gbp', 0.0)):.2f}</td>"
             f"<td class=\"{profit_class}\">GBP {profit:.2f}</td>"
             f"<td class=\"{margin_class}\">{margin:.2f}%</td>"
-            f"<td>{html.escape(item['confidence'])}</td>"
+            f"<td>{html.escape(str(item.get('confidence', 'unknown')))}</td>"
             "</tr>"
         )
     return "".join(rows)
@@ -74,7 +74,11 @@ def build_html_report(result: dict) -> str:
     """Render the report as a standalone HTML document."""
     marketplaces = result["marketplaces"]
     candidate_items = result["candidate_items"]
-    assessments = sorted(result["assessments"], key=lambda x: x["estimated_profit_gbp"], reverse=True)
+    assessments = sorted(
+        result["assessments"],
+        key=lambda x: float(x.get("estimated_profit_gbp", 0.0)),
+        reverse=True,
+    )
     source_diagnostics = result.get("source_diagnostics", [])
 
     by_source: dict[str, int] = {}
