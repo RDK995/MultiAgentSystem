@@ -22,6 +22,7 @@ from uk_resell_adk.models import CandidateItem, MarketplaceSite, ProfitabilityAs
 from uk_resell_adk.sources import HLJAdapter, NinNinGameAdapter, SurugaYaAdapter
 from uk_resell_adk.sources.base import SourceAdapter
 from uk_resell_adk.sources.common import configure_debug, refresh_currency_rates
+from uk_resell_adk.live_events import emit_visual_event, update_agent_status, visualizer_events_enabled
 from uk_resell_adk.tracing import traceable
 
 
@@ -188,7 +189,7 @@ def get_source_diagnostics() -> list[dict]:
 @traceable(name="discover_foreign_marketplaces", run_type="tool")
 def discover_foreign_marketplaces() -> list[MarketplaceSite]:
     """Return configured source marketplaces exposed to the workflow."""
-    return [
+    marketplaces = [
         MarketplaceSite(
             name=adapter.descriptor.name,
             country=adapter.descriptor.country,
@@ -197,11 +198,50 @@ def discover_foreign_marketplaces() -> list[MarketplaceSite]:
         )
         for adapter in _enabled_source_adapters()
     ]
+    if visualizer_events_enabled():
+        emit_visual_event(
+            agent_id="sourcing",
+            event_type="agent.tool_completed",
+            title="Tool output: discover_foreign_marketplaces",
+            summary=f"Resolved {len(marketplaces)} enabled source marketplaces.",
+            status="running",
+            metadata={
+                "toolName": "discover_foreign_marketplaces",
+                "resultCount": len(marketplaces),
+                "marketplaces": ", ".join(site.name for site in marketplaces),
+            },
+        )
+    return marketplaces
 
 
 @traceable(name="find_candidate_items", run_type="tool")
 def find_candidate_items(marketplace: MarketplaceSite) -> list[CandidateItem]:
     """Fetch candidate items from one marketplace and update diagnostics."""
+    if visualizer_events_enabled():
+        update_agent_status(
+            agent_id="sourcing",
+            name="Item Sourcing Agent",
+            role="Discovery specialist",
+            status="running",
+            current_step=f"Fetching candidates from {marketplace.name}",
+            progress=32,
+            tools=["discover_foreign_marketplaces", "find_candidate_items"],
+            current_tool="find_candidate_items",
+            current_target=marketplace.name,
+        )
+        emit_visual_event(
+            agent_id="sourcing",
+            event_type="agent.tool_called",
+            title="Tool input: find_candidate_items",
+            summary=f"Preparing source fetch for {marketplace.name}.",
+            status="running",
+            metadata={
+                "toolName": "find_candidate_items",
+                "marketplace": marketplace.name,
+                "marketplaceUrl": marketplace.url,
+            },
+        )
+
     adapter = _get_adapter_for_marketplace(marketplace)
     if adapter is None:
         return []
@@ -275,6 +315,40 @@ def find_candidate_items(marketplace: MarketplaceSite) -> list[CandidateItem]:
         detail_suffix = f" | {'; '.join(detail_parts)}" if detail_parts else ""
         LOGGER.warning("No candidates found for source: %s (status=%s)%s", marketplace.name, status, detail_suffix)
 
+    if visualizer_events_enabled():
+        emit_visual_event(
+            agent_id="sourcing",
+            event_type="agent.tool_completed",
+            title="Tool output: find_candidate_items",
+            summary=f"{marketplace.name} returned {len(deduped)} candidates with status {status}.",
+            status="running" if deduped else "waiting",
+            metadata={
+                "toolName": "find_candidate_items",
+                "marketplace": marketplace.name,
+                "resultCount": len(deduped),
+                "liveCount": live_count,
+                "fallbackCount": fallback_count,
+                "blockedCount": blocked_count,
+                "parseMissCount": parse_miss_count,
+                "errorCount": error_count,
+                "sampleTitles": " | ".join(item.title for item in deduped[:3]),
+            },
+        )
+        update_agent_status(
+            agent_id="sourcing",
+            name="Item Sourcing Agent",
+            role="Discovery specialist",
+            status="running" if deduped else "waiting",
+            current_step=f"Fetched candidates from {marketplace.name}",
+            progress=42,
+            tools=["discover_foreign_marketplaces", "find_candidate_items"],
+            current_tool="find_candidate_items",
+            current_target=marketplace.name,
+            completed_count=len(deduped),
+            total_count=len(deduped),
+            last_result=f"{len(deduped)} candidates from {marketplace.name}",
+        )
+
     return deduped
 
 
@@ -316,12 +390,52 @@ def _safe_fetch_ebay_price_snapshots(query: str) -> list[float]:
             prices.append(value)
         if len(prices) >= 20:
             break
+    if visualizer_events_enabled():
+        emit_visual_event(
+            agent_id="profitability",
+            event_type="agent.tool_completed",
+            title="Tool output: _safe_fetch_ebay_price_snapshots",
+            summary=f"Fetched {len(prices)} sold-price snapshots for `{query}`.",
+            status="running" if prices else "waiting",
+            metadata={
+                "toolName": "_safe_fetch_ebay_price_snapshots",
+                "query": query,
+                "resultCount": len(prices),
+                "samplePrices": ", ".join(f"{price:.2f}" for price in prices[:5]),
+            },
+        )
     return prices
 
 
 @traceable(name="assess_profitability_against_ebay", run_type="tool")
 def assess_profitability_against_ebay(item: CandidateItem) -> ProfitabilityAssessment:
     """Estimate resale profitability using eBay sold listing snapshots."""
+    if visualizer_events_enabled():
+        update_agent_status(
+            agent_id="profitability",
+            name="Profitability Agent",
+            role="Margin analyst",
+            status="running",
+            current_step=f"Assessing {item.title[:48]}",
+            progress=56,
+            tools=["assess_profitability_against_ebay"],
+            current_tool="assess_profitability_against_ebay",
+            current_target=item.title[:48],
+        )
+        emit_visual_event(
+            agent_id="profitability",
+            event_type="agent.tool_called",
+            title="Tool input: assess_profitability_against_ebay",
+            summary=f"Running profitability analysis for {item.title}.",
+            status="running",
+            metadata={
+                "toolName": "assess_profitability_against_ebay",
+                "itemTitle": item.title,
+                "itemUrl": item.url,
+                "sourcePriceGbp": round(item.source_price_gbp, 2),
+                "shippingToUkGbp": round(item.shipping_to_uk_gbp, 2),
+            },
+        )
     sold_prices = _safe_fetch_ebay_price_snapshots(item.title)
     benchmark = median(sold_prices) if sold_prices else item.source_price_gbp * 1.35
 
@@ -337,7 +451,7 @@ def assess_profitability_against_ebay(item: CandidateItem) -> ProfitabilityAsses
     else:
         confidence = "low"
 
-    return ProfitabilityAssessment(
+    assessment = ProfitabilityAssessment(
         item_title=item.title,
         item_url=item.url,
         total_landed_cost_gbp=round(landed_cost, 2),
@@ -347,3 +461,44 @@ def assess_profitability_against_ebay(item: CandidateItem) -> ProfitabilityAsses
         estimated_margin_percent=round(margin, 2),
         confidence=confidence,
     )
+    if visualizer_events_enabled():
+        metadata = {
+            "toolName": "assess_profitability_against_ebay",
+            "itemTitle": assessment.item_title,
+            "confidence": assessment.confidence,
+            "ebayMedianSalePriceGbp": assessment.ebay_median_sale_price_gbp,
+            "estimatedProfitGbp": assessment.estimated_profit_gbp,
+            "estimatedMarginPercent": assessment.estimated_margin_percent,
+        }
+        if assessment.estimated_profit_gbp > 0:
+            metadata.update(
+                {
+                    "profitableItemTitle": assessment.item_title,
+                    "profitableItemUrl": assessment.item_url,
+                    "profitableItemProfitGbp": assessment.estimated_profit_gbp,
+                    "profitableItemMarginPercent": assessment.estimated_margin_percent,
+                }
+            )
+        emit_visual_event(
+            agent_id="profitability",
+            event_type="agent.tool_completed",
+            title="Tool output: assess_profitability_against_ebay",
+            summary=f"{item.title} estimated profit is GBP {assessment.estimated_profit_gbp:.2f}.",
+            status="running",
+            metadata=metadata,
+        )
+        update_agent_status(
+            agent_id="profitability",
+            name="Profitability Agent",
+            role="Margin analyst",
+            status="running",
+            current_step=f"Finished {item.title[:40]}",
+            progress=68,
+            tools=["assess_profitability_against_ebay"],
+            current_tool="assess_profitability_against_ebay",
+            current_target=item.title[:48],
+            completed_count=1,
+            total_count=1,
+            last_result=f"GBP {assessment.estimated_profit_gbp:.2f} profit",
+        )
+    return assessment

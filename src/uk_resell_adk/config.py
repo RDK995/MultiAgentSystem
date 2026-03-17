@@ -12,6 +12,7 @@ class RuntimeConfig:
     model_name: str = "gemini-2.0-flash"
     max_foreign_sites: int = 10
     max_items_per_source: int = 8
+    profitability_concurrency: int = 20
     ebay_region: str = "GB"
     request_timeout_seconds: float = 10.0
     max_retries: int = 2
