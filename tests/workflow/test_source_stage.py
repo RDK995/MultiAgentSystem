@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from threading import Event
 from typing import Any
 
 from uk_resell_adk.application.workflow.source_stage import fetch_market_candidates, run_source_stage, source_worker_count
@@ -141,3 +142,41 @@ def test_run_source_stage_parallel_mode_emits_live_metrics(monkeypatch) -> None:
     assert sourcing_complete_events
     assert all("sourceLatencyMs" in event.get("metadata", {}) for event in sourcing_complete_events)
     assert any(update["agent_id"] == "sourcing" and update["status"] == "completed" for update in captured_updates)
+
+
+def test_run_source_stage_parallel_mode_stops_before_queueing_all_markets(monkeypatch) -> None:
+    marketplaces = [
+        MarketplaceSite("A", "JP", "https://a.example", "one"),
+        MarketplaceSite("B", "JP", "https://b.example", "two"),
+        MarketplaceSite("C", "JP", "https://c.example", "three"),
+        MarketplaceSite("D", "JP", "https://d.example", "four"),
+    ]
+    start_stop = Event()
+    calls: list[str] = []
+
+    monkeypatch.setenv("SOURCE_CONCURRENCY", "2")
+
+    def _find_candidates(market: MarketplaceSite) -> list[CandidateItem]:
+        calls.append(market.name)
+        # Trigger stop as soon as work starts so the stage should avoid
+        # queueing additional marketplaces beyond the initial in-flight set.
+        start_stop.set()
+        return [CandidateItem(market.name, f"{market.name}-item", f"https://{market.name}.example/item", 10.0, 2.0, "New")]
+
+    raised = False
+    try:
+        run_source_stage(
+            max_foreign_sites=4,
+            discover_marketplaces=lambda: marketplaces,
+            find_candidates=_find_candidates,
+            reset_diagnostics=lambda: None,
+            read_diagnostics=lambda: [],
+            stop_requested=start_stop.is_set,
+            events_enabled=lambda: False,
+        )
+    except RuntimeError as exc:
+        raised = True
+        assert "Run stopped by user." in str(exc)
+
+    assert raised is True
+    assert len(calls) < len(marketplaces)

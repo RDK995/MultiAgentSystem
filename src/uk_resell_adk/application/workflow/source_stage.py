@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 import os
 from time import perf_counter
@@ -204,8 +204,10 @@ def run_source_stage(
             _record_market_result(fetch_market_candidates(market, find_candidates=find_candidates))
     else:
         with ThreadPoolExecutor(max_workers=worker_count, thread_name_prefix="source-fetch") as executor:
-            future_to_market = {}
-            for market in marketplaces:
+            future_to_market: dict[Future[SourceFetchResult], MarketplaceSite] = {}
+            next_market_index = 0
+
+            def _submit_market(market: MarketplaceSite) -> None:
                 if events_enabled():
                     emit_event(
                         agent_id="sourcing",
@@ -218,10 +220,31 @@ def run_source_stage(
                 future = executor.submit(fetch_market_candidates, market, find_candidates=find_candidates)
                 future_to_market[future] = market
 
-            for completed in as_completed(future_to_market):
+            while next_market_index < len(marketplaces) and len(future_to_market) < worker_count:
                 if stop_requested():
+                    for pending_future in future_to_market:
+                        pending_future.cancel()
                     raise RuntimeError("Run stopped by user.")
-                _record_market_result(completed.result())
+                _submit_market(marketplaces[next_market_index])
+                next_market_index += 1
+
+            while future_to_market:
+                done, _ = wait(future_to_market.keys(), return_when=FIRST_COMPLETED)
+                for completed in done:
+                    future_to_market.pop(completed, None)
+                    if stop_requested():
+                        for pending_future in future_to_market:
+                            pending_future.cancel()
+                        raise RuntimeError("Run stopped by user.")
+                    _record_market_result(completed.result())
+
+                while next_market_index < len(marketplaces) and len(future_to_market) < worker_count:
+                    if stop_requested():
+                        for pending_future in future_to_market:
+                            pending_future.cancel()
+                        raise RuntimeError("Run stopped by user.")
+                    _submit_market(marketplaces[next_market_index])
+                    next_market_index += 1
 
     if events_enabled():
         update_agent(
