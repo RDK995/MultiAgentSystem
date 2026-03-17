@@ -202,14 +202,6 @@ def _flush_tracing_clients() -> None:
             pass
 
 
-def configure_langsmith(project_name: str = "uk-resell-adk") -> None:
-    """Backward-compatible alias for legacy call sites.
-
-    This now configures both LangSmith and Langfuse tracing defaults.
-    """
-    configure_tracing(project_name=project_name)
-
-
 def configure_tracing(project_name: str = "uk-resell-adk") -> None:
     """Enable tracing defaults for LangSmith and Langfuse concurrently."""
     global _AEXIT_REGISTERED

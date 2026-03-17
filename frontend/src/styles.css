@@ -14,7 +14,7 @@
   --green: #71e0ab;
   --amber: #ffc767;
   --coral: #ff8d7b;
-  --glow: 0 20px 56px rgba(5, 12, 20, 0.46);
+  --glow: 0 12px 32px rgba(5, 12, 20, 0.34);
 }
 
 * {
@@ -105,7 +105,7 @@ button {
   border-radius: 999px;
   border: 1px solid var(--border-soft);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03));
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(4px);
   font-size: 0.93rem;
   color: rgba(242, 248, 255, 0.92);
 }
@@ -138,9 +138,12 @@ button {
   background:
     linear-gradient(125deg, rgba(255, 255, 255, 0.06), transparent 34%),
     linear-gradient(180deg, var(--panel), var(--panel-strong));
-  backdrop-filter: blur(16px);
+  backdrop-filter: blur(8px);
   box-shadow: var(--glow);
   overflow: hidden;
+  contain: layout paint style;
+  content-visibility: auto;
+  contain-intrinsic-size: 380px;
 }
 
 .summary-card::before,
@@ -187,6 +190,41 @@ button {
 
 .summary-actions {
   margin-top: 22px;
+}
+
+.run-config-grid {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.run-config-field {
+  display: grid;
+  gap: 6px;
+}
+
+.run-config-field span {
+  font-size: 0.74rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--muted) 86%, #dceafd);
+}
+
+.run-config-field input {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(129, 159, 197, 0.32);
+  background: rgba(9, 18, 31, 0.7);
+  color: var(--text);
+  font-size: 0.92rem;
+  padding: 9px 10px;
+}
+
+.run-config-field input:focus-visible {
+  outline: none;
+  border-color: rgba(107, 200, 255, 0.66);
+  box-shadow: 0 0 0 2px rgba(107, 200, 255, 0.16);
 }
 
 .start-button,
@@ -259,7 +297,8 @@ button {
   background:
     radial-gradient(circle at top left, rgba(255, 255, 255, 0.1), transparent 28%),
     linear-gradient(180deg, rgba(19, 32, 50, 0.86), rgba(13, 24, 39, 0.9));
-  transition: transform 0.26s ease, box-shadow 0.26s ease, border-color 0.26s ease;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  contain: layout paint style;
 }
 
 .flow-robot-row {
@@ -340,13 +379,47 @@ button {
 
 .flow-node p {
   margin: 0;
-  min-height: 54px;
+  min-height: 40px;
   font-size: 0.92rem;
   line-height: 1.38;
 }
 
+.flow-progress {
+  height: 6px;
+  width: 100%;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.flow-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, currentColor, color-mix(in srgb, currentColor 70%, #ffffff));
+  border-radius: inherit;
+  transition: width 0.28s ease;
+}
+
+.flow-metric-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.flow-metric-pill {
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 44%, transparent);
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  padding: 3px 8px;
+  font-size: 0.72rem;
+  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 .agent-detail-lines {
-  margin-top: 11px;
+  margin-top: 6px;
   display: grid;
   gap: 4px;
   font-size: 0.78rem;
@@ -370,13 +443,22 @@ button {
   border-left: 8px solid rgba(186, 205, 228, 0.35);
 }
 
+.flow-arrow-active {
+  background: linear-gradient(90deg, color-mix(in srgb, currentColor 76%, transparent), rgba(186, 205, 228, 0.12));
+  animation: arrowPulse 1.2s ease-in-out infinite;
+}
+
+.flow-arrow-active::after {
+  border-left-color: color-mix(in srgb, currentColor 70%, rgba(186, 205, 228, 0.35));
+}
+
 .is-live {
   transform: translateY(-2px);
   border-color: var(--border-strong);
   box-shadow:
     inset 0 1px 0 rgba(240, 247, 255, 0.08),
     0 0 0 1px rgba(154, 188, 228, 0.1),
-    0 16px 36px rgba(8, 17, 28, 0.38);
+    0 10px 22px rgba(8, 17, 28, 0.28);
 }
 
 .is-running {
@@ -387,7 +469,8 @@ button {
 }
 
 .robot-active {
-  box-shadow: 0 0 22px color-mix(in srgb, currentColor 42%, transparent);
+  box-shadow: 0 0 12px color-mix(in srgb, currentColor 30%, transparent);
+  animation: robotPulse 1.4s ease-in-out infinite;
 }
 
 .accent-blue {
@@ -415,9 +498,38 @@ button {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(236px, 1fr));
   gap: 12px;
+  content-visibility: auto;
+  contain-intrinsic-size: 300px;
+}
+
+.recent-feed-virtualized {
+  position: relative;
+  overflow: auto;
+  border-radius: 14px;
+  border: 1px solid rgba(129, 159, 197, 0.12);
+  background: linear-gradient(180deg, rgba(12, 20, 34, 0.36), rgba(10, 18, 30, 0.48));
+}
+
+.recent-feed-inner {
+  position: relative;
+}
+
+.recent-feed-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 12px;
+  padding: 0 2px;
 }
 
 .item-card {
+  height: calc(156px - 12px);
+  display: grid;
+  align-content: start;
+  grid-template-rows: auto auto 1fr;
+  gap: 6px;
+  overflow: hidden;
   border-radius: 16px;
   border: 1px solid var(--border-soft);
   background: linear-gradient(180deg, rgba(23, 36, 55, 0.76), rgba(15, 25, 40, 0.86));
@@ -438,17 +550,41 @@ button {
 
 .item-card-header strong {
   font-size: 0.9rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.28;
 }
 
 .item-card-meta {
   font-size: 0.82rem;
-  margin-bottom: 6px;
+  margin-bottom: 0;
 }
 
 .item-profit {
   color: var(--green);
   font-weight: 700;
   white-space: nowrap;
+}
+
+.item-profit-wrap {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+}
+
+.item-profit-label {
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-radius: 999px;
+  border: 1px solid rgba(113, 224, 171, 0.34);
+  background: rgba(113, 224, 171, 0.12);
+  color: color-mix(in srgb, var(--green) 86%, #e9fff4);
+  padding: 2px 7px;
+  line-height: 1.1;
+  font-weight: 700;
 }
 
 .item-link,
@@ -462,6 +598,26 @@ button {
 .item-link:hover,
 .report-agent-link:hover {
   text-decoration: underline;
+}
+
+@keyframes robotPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 12px color-mix(in srgb, currentColor 30%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 20px color-mix(in srgb, currentColor 52%, transparent);
+  }
+}
+
+@keyframes arrowPulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 @keyframes revealUp {
@@ -535,6 +691,10 @@ button {
   .live-card {
     padding: 18px 14px 16px;
     border-radius: 18px;
+  }
+
+  .run-config-grid {
+    grid-template-columns: 1fr;
   }
 
   .flow-track {
