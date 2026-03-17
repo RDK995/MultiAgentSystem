@@ -14,6 +14,8 @@ import sys
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
 
+from uk_resell_adk.live_events import emit_visual_event, visualizer_events_enabled
+
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -119,6 +121,7 @@ def _langfuse_trace_identity_decorator() -> Callable[[F], F]:
 def traceable(*args: Any, **kwargs: Any) -> Callable[[F], F]:
     """Return a decorator that fans out traces to enabled providers."""
     decorators: list[Callable[[F], F]] = []
+    visualizer_enabled = visualizer_events_enabled()
 
     langfuse_enabled = _env_truthy("ENABLE_LANGFUSE_TRACING", True) and bool(os.getenv("LANGFUSE_PUBLIC_KEY")) and bool(
         os.getenv("LANGFUSE_SECRET_KEY")
@@ -136,7 +139,58 @@ def traceable(*args: Any, **kwargs: Any) -> Callable[[F], F]:
     if langsmith_enabled and _langsmith_traceable is not None:
         decorators.append(cast(Callable[[F], F], _langsmith_traceable(*args, **kwargs)))
 
+    if visualizer_enabled:
+        decorators.append(_visualizer_traceable_decorator(*args, **kwargs))
+
     return _compose_decorators(decorators)
+
+
+def _visualizer_traceable_decorator(*args: Any, **kwargs: Any) -> Callable[[F], F]:
+    del args
+
+    name = str(kwargs.get("name") or "trace")
+    run_type = str(kwargs.get("run_type") or "chain")
+    event_type_started = "agent.tool_called" if run_type == "tool" else "agent.progress"
+    event_type_completed = "agent.tool_completed" if run_type == "tool" else "agent.message"
+    agent_id = name.replace(" ", "_").replace("-", "_")
+
+    def _decorator(func: F) -> F:
+        @functools.wraps(func)
+        def _wrapped(*f_args: Any, **f_kwargs: Any) -> Any:
+            emit_visual_event(
+                agent_id=agent_id,
+                event_type=event_type_started,
+                title=f"{name} started",
+                summary=f"Tracing span `{name}` is now active.",
+                status="running",
+                metadata={"run_type": run_type},
+            )
+            try:
+                result = func(*f_args, **f_kwargs)
+            except Exception as exc:
+                emit_visual_event(
+                    agent_id=agent_id,
+                    event_type="agent.error",
+                    title=f"{name} failed",
+                    summary=f"Tracing span `{name}` raised an exception.",
+                    status="failed",
+                    metadata={"run_type": run_type, "error": str(exc)},
+                )
+                raise
+
+            emit_visual_event(
+                agent_id=agent_id,
+                event_type=event_type_completed,
+                title=f"{name} completed",
+                summary=f"Tracing span `{name}` finished successfully.",
+                status="completed",
+                metadata={"run_type": run_type},
+            )
+            return result
+
+        return cast(F, _wrapped)
+
+    return _decorator
 
 
 def _flush_tracing_clients() -> None:

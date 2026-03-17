@@ -52,6 +52,14 @@ python -m uk_resell_adk.main --json
 
 By default, reports are written to unique files like `reports/uk_resell_report_20260217_204113.html`.
 
+## Demo Tuning
+
+You can shorten runs for local demos with environment variables:
+
+- `ENABLED_SOURCES=hlj` to use a single source
+- `SOURCE_RESEARCH_DEPTH_MULTIPLIER=1` to reduce source fetch depth
+- `PROFITABILITY_CONCURRENCY=4` to process profitability checks in parallel
+
 ## Tracing (LangSmith + Langfuse)
 
 Tracing is optional and can run to both providers concurrently.

@@ -72,6 +72,37 @@ def test_traceable_returns_passthrough_when_providers_disabled(monkeypatch: Any)
     assert wrapped() == "ok"
 
 
+def test_traceable_emits_visualizer_events_when_enabled(monkeypatch: Any) -> None:
+    from uk_resell_adk import live_events
+
+    captured: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(tracing, "_langsmith_traceable", None)
+    monkeypatch.setattr(tracing, "_langfuse_observe", None)
+    monkeypatch.setenv("ENABLE_LANGSMITH_TRACING", "false")
+    monkeypatch.setenv("ENABLE_LANGFUSE_TRACING", "false")
+    monkeypatch.setattr(live_events, "_VISUALIZER_ENABLED", True)
+
+    original_emit = live_events.emit_visual_event
+
+    def _capture_emit(**kwargs: Any) -> dict[str, Any] | None:
+        captured.append(kwargs)
+        return original_emit(**kwargs)
+
+    monkeypatch.setattr(tracing, "emit_visual_event", _capture_emit)
+    monkeypatch.setattr(tracing, "visualizer_events_enabled", lambda: True)
+
+    decorator = tracing.traceable(name="abc", run_type="tool")
+
+    def sample() -> str:
+        return "ok"
+
+    wrapped = decorator(sample)
+
+    assert wrapped() == "ok"
+    assert [event["title"] for event in captured] == ["abc started", "abc completed"]
+
+
 def test_traceable_delegates_to_both_when_available(monkeypatch: Any) -> None:
     events: list[str] = []
 
