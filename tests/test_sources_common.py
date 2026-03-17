@@ -2,8 +2,22 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from uk_resell_adk.sources import common
 from uk_resell_adk.sources.common import extract_products_from_html, extract_products_from_json_ld
+
+
+@pytest.fixture(autouse=True)
+def _reset_fx_state(monkeypatch: Any) -> None:
+    """Keep FX conversion tests deterministic across suite order.
+
+    `sources.common` stores exchange rates in module globals that can be
+    refreshed by other tests. Reset both the map and refresh timestamp so each
+    test starts from fallback defaults unless it explicitly patches refresh.
+    """
+    monkeypatch.setattr(common, "_CURRENCY_TO_GBP", dict(common._DEFAULT_CURRENCY_TO_GBP))
+    monkeypatch.setattr(common, "_FX_LAST_REFRESH_TS", 0.0)
 
 
 def test_extract_products_from_html_parses_yen_symbol_prices() -> None:
