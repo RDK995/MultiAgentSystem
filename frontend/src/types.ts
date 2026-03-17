@@ -1,16 +1,4 @@
-export type AgentStatus = "queued" | "running" | "waiting" | "completed" | "failed";
-
-export type EventType =
-  | "run.started"
-  | "run.completed"
-  | "agent.started"
-  | "agent.progress"
-  | "agent.message"
-  | "agent.tool_called"
-  | "agent.tool_completed"
-  | "agent.file_changed"
-  | "agent.blocked"
-  | "agent.error";
+import type { AgentStatus, EventType } from "./shared/contracts/eventContracts";
 
 export type Agent = {
   id: string;
@@ -26,6 +14,11 @@ export type Agent = {
   completedCount?: number;
   totalCount?: number;
   lastResult?: string;
+  sourceLatencyMs?: number;
+  itemsScanned?: number;
+  itemsEmitted?: number;
+  marketsProcessed?: number;
+  marketsTotal?: number;
   lastEventAt: string;
 };
 

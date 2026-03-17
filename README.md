@@ -1,86 +1,101 @@
-# Google ADK Multi-Agent UK Resell Lead System
+# UK Resell ADK Visualizer
 
-This project runs a Google ADK-oriented sourcing pipeline to identify UK resale opportunities from Japanese trading-card retailers.
+Production multi-agent workflow for sourcing and evaluating UK resale opportunities, with a live frontend for real-time agent execution.
 
-## Current Scope
+## Architecture
 
-- Category focus: trading cards (Pokemon, One Piece, Yu-Gi-Oh, Digimon, related TCG products).
-- Active sources:
-  - HobbyLink Japan (`https://www.hlj.com/`)
-  - Nin-Nin-Game (`https://www.nin-nin-game.com/en/`)
-- Output: JSON (optional) plus a formatted timestamped HTML report.
+```text
+Frontend (React/Vite)
+  ├─ shared/api/runClient.ts      -> REST snapshot/start/stop
+  ├─ shared/api/eventClient.ts    -> SSE stream with cursor reconnect
+  └─ features/events/eventReducer -> reducer-driven stream state
+                 │
+                 ▼
+Backend (ThreadingHTTPServer)
+  ├─ api/handlers.py              -> thin route/transport handlers
+  ├─ application/run_service.py   -> run lifecycle orchestration
+  ├─ application/workflow/*       -> source / profitability / report stages
+  ├─ infrastructure/event_store.py-> thread-safe live store + sequence replay
+  └─ infrastructure/artifact_store.py -> secure artifact serving
+```
 
-## Agent Design
+## Canonical Event Contract
 
-The ADK graph is a simple orchestrator + specialists sequence:
+- Canonical backend contract: `src/uk_resell_adk/contracts/events.py`.
+- Frontend mirror constants: `frontend/src/shared/contracts/eventContracts.ts`.
+- Drift guard test: `tests/contracts/test_frontend_event_contract_sync.py`.
 
-1. `item_sourcing_agent`
-   - Calls `find_candidate_items` for configured sources.
-2. `profitability_agent`
-   - Calls `assess_profitability_against_ebay` for each candidate.
-3. `report_writer_agent`
-   - Produces a structured lead report.
-4. `uk_resell_orchestrator`
-   - Parent `SequentialAgent` combining all stages.
-
-## Project Layout
-
-- `src/uk_resell_adk/agents.py` – ADK multi-agent construction
-- `src/uk_resell_adk/tools.py` – tool functions and source diagnostics
-- `src/uk_resell_adk/sources/` – source adapters and shared parsing helpers
-- `src/uk_resell_adk/html_renderer.py` – HTML report generation
-- `src/uk_resell_adk/main.py` – local dry-run CLI entrypoint
-- `src/uk_resell_adk/app.py` – exposes `root_agent` for ADK runtime
-
-## Quick Start
+## Local Run
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .
-python -m uk_resell_adk.main --json
+pip install -e ".[dev]"
+
+# Backend visualizer API (127.0.0.1:8008)
+PYTHONPATH=src python -m uk_resell_adk.visualizer_server
 ```
 
-## CLI Flags
-
-- `--json` print workflow payload as JSON
-- `--html-out <path>` write report to a fixed path
-- `--allow-fallback` allow static fallback catalog items when live scrape fails
-- `--strict-live` fail run when a required source has zero live candidates
-- `--debug-sources` write raw source snapshots to debug folder
-- `--debug-dir <path>` set debug snapshot directory (default `debug/sources`)
-
-By default, reports are written to unique files like `reports/uk_resell_report_20260217_204113.html`.
-
-## Demo Tuning
-
-You can shorten runs for local demos with environment variables:
-
-- `ENABLED_SOURCES=hlj` to use a single source
-- `SOURCE_RESEARCH_DEPTH_MULTIPLIER=1` to reduce source fetch depth
-- `PROFITABILITY_CONCURRENCY=4` to process profitability checks in parallel
-
-## Tracing (LangSmith + Langfuse)
-
-Tracing is optional and can run to both providers concurrently.
+In another terminal:
 
 ```bash
-export ENABLE_LANGSMITH_TRACING="true"   # optional, defaults true
-export ENABLE_LANGFUSE_TRACING="true"    # optional, defaults true
-
-export LANGSMITH_API_KEY="your-langsmith-api-key"
-export LANGSMITH_PROJECT="uk-resell-adk" # optional
-
-export LANGFUSE_PUBLIC_KEY="your-langfuse-public-key"
-export LANGFUSE_SECRET_KEY="your-langfuse-secret-key"
-export LANGFUSE_BASE_URL="https://cloud.langfuse.com" # optional
+cd frontend
+npm install
+npm run dev
 ```
 
-Traced spans include:
-- `run_local_dry_run`
-- `build_multi_agent_system`
-- sourcing/profitability tool calls
+Default frontend: `http://127.0.0.1:4173`  
+Default backend: `http://127.0.0.1:8008`
 
-## ADK Runtime
+## Runbook
 
-Use `uk_resell_adk.app:root_agent` as the ADK entrypoint.
+1. Start backend server and verify health: `curl http://127.0.0.1:8008/health`.
+2. Start frontend and open `http://127.0.0.1:4173`.
+3. Click `Start run`.
+4. Observe live agent transitions and profitable items as SSE events stream in.
+5. Validate report artifact link appears on report agent completion.
+6. Start a second run without restarting services (back-to-back reliability path).
+
+## Testing & Quality Gates
+
+Backend:
+
+```bash
+pytest
+mypy src/uk_resell_adk
+```
+
+Frontend unit/integration:
+
+```bash
+cd frontend
+npm run test -- --run
+npm run test:coverage
+npm run build
+```
+
+Frontend E2E (Playwright):
+
+```bash
+cd frontend
+npx playwright install chromium
+npm run e2e
+```
+
+## CI Required Checks
+
+CI workflow: `.github/workflows/ci.yml`
+
+Configure branch protection to require these job checks:
+
+- `backend-tests`
+- `backend-typecheck`
+- `frontend-tests`
+- `frontend-e2e`
+
+These checks enforce:
+
+- backend tests with coverage threshold (`application` + `domain` >= 85%),
+- strict backend type-checking,
+- frontend coverage threshold (features >= 80%),
+- full Playwright lifecycle verification (start run, observe transitions, open report, run again).

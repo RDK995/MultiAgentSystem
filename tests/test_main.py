@@ -103,11 +103,12 @@ def test_run_local_dry_run_respects_config_limits(monkeypatch: Any) -> None:
         result = main.run_local_dry_run()
 
         assert len(result["marketplaces"]) == 1
-        assert len(result["candidate_items"]) == 2
-        assert len(result["assessments"]) == 2
+        # Full-report mode now includes every analyzed candidate and assessment.
+        assert len(result["candidate_items"]) == 3
+        assert len(result["assessments"]) == 3
         assert len(assessed_titles) == 3
-        assert assessed_titles == ["A", "B", "C"]
-        assert [a["item_title"] for a in result["assessments"]] == ["B", "C"]
+        assert sorted(assessed_titles) == ["A", "B", "C"]
+        assert sorted(a["item_title"] for a in result["assessments"]) == ["A", "B", "C"]
         assert result["analyzed_candidate_count"] == 3
         assert result["analyzed_assessment_count"] == 3
     finally:

@@ -1,32 +1,64 @@
-# Agent Activity Visualizer Frontend
+# Frontend Visualizer
 
-This is the first working prototype of the mission-control dashboard described in the root implementation plan.
+React + TypeScript + Vite dashboard for live agent-flow visualization.
 
-## What it includes
+## Frontend Structure
 
-- React + TypeScript + Vite app scaffold
-- cinematic three-panel dashboard layout
-- real backend-driven event stream only
-- agent cards, event timeline, and inspector panel
-- a frontend event contract ready for real backend wiring
+- `src/App.tsx`
+  - composition shell only.
+- `src/features/runs/`
+  - `RunControls.tsx` run lifecycle controls.
+- `src/features/events/`
+  - `eventReducer.ts` and `eventStore.ts` for event-driven state updates.
+  - `useLiveEventStream.ts` snapshot bootstrap + SSE subscription lifecycle.
+  - selectors for profitable-item and report-artifact extraction.
+- `src/features/agents/`
+  - `AgentFlow.tsx` live flow rendering.
+- `src/features/artifacts/`
+  - `ReportLink.tsx` report artifact link rendering.
+- `src/shared/api/`
+  - `runClient.ts` run/snapshot API calls.
+  - `eventClient.ts` SSE subscription with reconnect + cursor policy.
+- `src/shared/contracts/`
+  - `eventContracts.ts` frontend event/status contract mirror.
 
-## Run locally
+## Contract Sync
+
+- Backend canonical contract: `../src/uk_resell_adk/contracts/events.py`
+- Frontend mirror: `src/shared/contracts/eventContracts.ts`
+- Drift test runs in backend CI: `tests/contracts/test_frontend_event_contract_sync.py`
+
+## Run
 
 ```bash
-cd /Users/ryankenny/Projects/ADKVisuals/MultiAgentSystem
-PYTHONPATH=src python -m uk_resell_adk.visualizer_server
-
-cd frontend
 npm install
 npm run dev
 ```
 
-The Vite dev server is configured for `http://localhost:4173`.
-The backend stream server runs on `http://127.0.0.1:8008`.
+Set backend URL if needed:
 
-If your backend runs somewhere else, set `VITE_API_BASE_URL` before starting the frontend.
+```bash
+export VITE_API_BASE_URL="http://127.0.0.1:8008"
+```
 
-## Integration path
+## Tests
 
-The frontend reads its initial snapshot and live updates from [src/lib/streaming.ts](/Users/ryankenny/Projects/ADKVisuals/MultiAgentSystem/frontend/src/lib/streaming.ts).
-It requires the Python SSE backend and does not fall back to mock data.
+Unit/integration:
+
+```bash
+npm run test -- --run
+npm run test:coverage
+```
+
+Build validation:
+
+```bash
+npm run build
+```
+
+Playwright E2E:
+
+```bash
+npx playwright install chromium
+npm run e2e
+```

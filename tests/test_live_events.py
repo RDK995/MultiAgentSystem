@@ -60,6 +60,9 @@ def test_complete_visual_run_updates_run_status() -> None:
     assert snapshot["run"]["status"] == "completed"
     assert snapshot["events"][-1]["type"] == "run.completed"
     assert snapshot["events"][-1]["metadata"]["count"] == 2
+    assert snapshot["events"][-1]["metadata"]["progress"] == 100
+    assert snapshot["events"][-1]["metadata"]["completedCount"] == 3
+    assert snapshot["events"][-1]["metadata"]["totalCount"] == 3
 
 
 def test_wait_for_events_resyncs_after_new_run_sequence_reset() -> None:

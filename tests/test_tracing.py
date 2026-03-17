@@ -61,6 +61,7 @@ def test_traceable_returns_passthrough_when_providers_disabled(monkeypatch: Any)
     monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
     monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+    monkeypatch.setattr(tracing, "visualizer_events_enabled", lambda: False)
 
     decorator = tracing.traceable(name="x")
 
@@ -81,7 +82,7 @@ def test_traceable_emits_visualizer_events_when_enabled(monkeypatch: Any) -> Non
     monkeypatch.setattr(tracing, "_langfuse_observe", None)
     monkeypatch.setenv("ENABLE_LANGSMITH_TRACING", "false")
     monkeypatch.setenv("ENABLE_LANGFUSE_TRACING", "false")
-    monkeypatch.setattr(live_events, "_VISUALIZER_ENABLED", True)
+    live_events.enable_visualizer_events(True)
 
     original_emit = live_events.emit_visual_event
 
@@ -101,6 +102,7 @@ def test_traceable_emits_visualizer_events_when_enabled(monkeypatch: Any) -> Non
 
     assert wrapped() == "ok"
     assert [event["title"] for event in captured] == ["abc started", "abc completed"]
+    live_events.enable_visualizer_events(False)
 
 
 def test_traceable_delegates_to_both_when_available(monkeypatch: Any) -> None:
